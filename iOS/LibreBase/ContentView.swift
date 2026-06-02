@@ -75,16 +75,16 @@ struct ContentView: View {
                 // Save to Health toggle
                 Toggle("Save to Apple Health", isOn: $autoSaveToHealth)
 
-                // Recon log (Phase 1 GATT capture) — shown only while in recon mode
+                // Recon mode toggle (Phase 1 GATT capture) — always available so
+                // it can be turned back on to capture a new device/cycle.
+                Toggle("Recon mode (BLE capture)", isOn: $scale.reconMode)
+
+                // Recon log — shown only while in recon mode
                 if scale.reconMode {
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("Recon log")
-                                .font(.footnote.bold())
-                            Spacer()
-                            Toggle("", isOn: $scale.reconMode)
-                                .labelsHidden()
-                        }
+                        Text("Recon log")
+                            .font(.footnote.bold())
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         ScrollView {
                             Text(scale.reconLog.isEmpty
                                  ? "Discovering services… step on the scale to capture payloads."
