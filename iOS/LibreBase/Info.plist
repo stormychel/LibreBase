@@ -2,9 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>remote-notification</string>
-	</array>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>LibreBase connects to your Qardio scale over Bluetooth to read your weight.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>LibreBase does not read any data from Apple Health.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>LibreBase saves your weight measurements to Apple Health.</string>
 </dict>
 </plist>
