@@ -13,7 +13,9 @@ struct ContentView: View {
     @AppStorage("autoSaveToHealth") private var autoSaveToHealth = true
     @AppStorage("heightCm") private var heightCm = 0.0
     @State private var showHeightSheet = false
-    @State private var pickerCm = 170.0
+    @State private var pickerCmValue = 170   // wheel selection, metric (cm)
+    @State private var pickerFeet = 5         // wheel selection, imperial
+    @State private var pickerInches = 7
 
     /// Show height in feet/inches in imperial regions, centimeters otherwise.
     private var useMetric: Bool { Locale.current.measurementSystem == .metric }
@@ -43,43 +45,36 @@ struct ContentView: View {
         return "\(totalIn / 12)′ \(totalIn % 12)″"
     }
 
-    // Wheel bindings translate between the picker's whole-unit values and the
-    // canonical centimeter store. Feet and inches both derive from the same
-    // rounded total-inches value so they never disagree at a boundary.
-    private var pickerCmInt: Binding<Int> {
-        Binding(get: { Int(pickerCm.rounded()) }, set: { pickerCm = Double($0) })
-    }
-    private var pickerFeet: Binding<Int> {
-        Binding(get: { Int((pickerCm / 2.54).rounded()) / 12 },
-                set: { ft in
-                    let inch = Int((pickerCm / 2.54).rounded()) % 12
-                    pickerCm = Double(ft * 12 + inch) * 2.54
-                })
-    }
-    private var pickerInches: Binding<Int> {
-        Binding(get: { Int((pickerCm / 2.54).rounded()) % 12 },
-                set: { inch in
-                    let ft = Int((pickerCm / 2.54).rounded()) / 12
-                    pickerCm = Double(ft * 12 + inch) * 2.54
-                })
+    /// Seed the wheel(s) from the stored height before presenting, clamped to the
+    /// picker's range. Defaults to a sensible value when no height is set yet.
+    private func seedHeightPicker() {
+        if useMetric {
+            let cm = heightCm > 0 ? Int(heightCm.rounded()) : 170
+            pickerCmValue = min(max(cm, 120), 220)
+        } else {
+            let totalIn = heightCm > 0 ? Int((heightCm / 2.54).rounded()) : 67
+            let clamped = min(max(totalIn, 36), 95)   // 3′0″…7′11″
+            pickerFeet = clamped / 12
+            pickerInches = clamped % 12
+        }
     }
 
     private var heightPicker: some View {
         NavigationView {
             Group {
                 if useMetric {
-                    Picker("Height", selection: pickerCmInt) {
+                    Picker("Height", selection: $pickerCmValue) {
                         ForEach(120...220, id: \.self) { Text("\($0) cm").tag($0) }
                     }
                     .pickerStyle(.wheel)
                 } else {
                     HStack(spacing: 0) {
-                        Picker("Feet", selection: pickerFeet) {
+                        Picker("Feet", selection: $pickerFeet) {
                             ForEach(3...7, id: \.self) { Text("\($0) ft").tag($0) }
                         }
                         .pickerStyle(.wheel)
                         .frame(maxWidth: .infinity)
-                        Picker("Inches", selection: pickerInches) {
+                        Picker("Inches", selection: $pickerInches) {
                             ForEach(0...11, id: \.self) { Text("\($0) in").tag($0) }
                         }
                         .pickerStyle(.wheel)
@@ -92,8 +87,10 @@ struct ContentView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
-                        heightCm = pickerCm
-                        let cm = pickerCm
+                        let cm = useMetric
+                            ? Double(pickerCmValue)
+                            : Double(pickerFeet * 12 + pickerInches) * 2.54
+                        heightCm = cm
                         showHeightSheet = false
                         // Keep Apple Health in sync with the edit.
                         Task { try? await health.saveHeight(cm: cm) }
@@ -170,7 +167,7 @@ struct ContentView: View {
                 // trusted without the Qardio app). Tapping opens a unit-aware
                 // wheel picker; the choice is written back to Apple Health.
                 Button {
-                    pickerCm = heightCm > 0 ? heightCm : 170
+                    seedHeightPicker()
                     showHeightSheet = true
                 } label: {
                     HStack {
