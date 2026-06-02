@@ -11,10 +11,20 @@ struct ContentView: View {
     @EnvironmentObject var scale: ScaleClient
     @EnvironmentObject var health: Health
     @AppStorage("autoSaveToHealth") private var autoSaveToHealth = true
+    @AppStorage("heightCm") private var heightCm = 0.0
 
     private var weightText: String {
         guard let r = scale.lastReading else { return "—" }
         return String(format: "%.1f kg", r.weightKg)
+    }
+
+    // BMI is computed in-app from a locally stored height. We deliberately ignore
+    // the scale's own BMI: it depends on a height set via the (discontinued)
+    // Qardio app and is often stale, for another user, or absent entirely.
+    private var bmi: Double? {
+        guard let r = scale.lastReading, heightCm > 0 else { return nil }
+        let m = heightCm / 100
+        return r.weightKg / (m * m)
     }
 
     var body: some View {
@@ -50,9 +60,13 @@ struct ContentView: View {
                         Text(weightText)
                             .font(.system(size: 44, weight: .bold, design: .rounded))
                             .contentTransition(.numericText())
-                        if let bmi = r.bmi {
+                        if let bmi {
                             Label(String(format: "BMI %.1f", bmi), systemImage: "figure")
                                 .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Label("Set your height for BMI", systemImage: "ruler")
+                                .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
                         Text(r.timestamp, format: Date.FormatStyle(date: .abbreviated, time: .shortened))
@@ -74,6 +88,19 @@ struct ContentView: View {
 
                 // Save to Health toggle
                 Toggle("Save to Apple Health", isOn: $autoSaveToHealth)
+
+                // Height — used to compute BMI in-app (the scale's BMI can't be
+                // trusted without the Qardio app).
+                HStack {
+                    Text("Height")
+                    Spacer()
+                    TextField("––", value: $heightCm, format: .number)
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 64)
+                    Text("cm")
+                        .foregroundStyle(.secondary)
+                }
 
                 // Recon mode toggle (Phase 1 GATT capture) — always available so
                 // it can be turned back on to capture a new device/cycle.

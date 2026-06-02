@@ -12,7 +12,6 @@ import Foundation
 /// A single stabilized weigh-in from the scale.
 struct ScaleReading {
     let weightKg: Double
-    let bmi: Double?
     let timestamp: Date
 }
 
@@ -207,9 +206,6 @@ final class ScaleClient: NSObject, ObservableObject {
 
         let flags = b[0]
         let isImperial = (flags & 0x01) != 0
-        let timestampPresent = (flags & 0x02) != 0
-        let userIDPresent = (flags & 0x04) != 0
-        let bmiHeightPresent = (flags & 0x08) != 0
 
         let rawWeight = UInt16(b[1]) | (UInt16(b[2]) << 8)
         // SI: 0.005 kg/unit. Imperial: 0.01 lb/unit → convert to kg.
@@ -217,17 +213,10 @@ final class ScaleClient: NSObject, ObservableObject {
             ? Double(rawWeight) * 0.01 * 0.45359237
             : Double(rawWeight) * 0.005
 
-        var idx = 3
-        if timestampPresent { idx += 7 }
-        if userIDPresent { idx += 1 }
-
-        var bmi: Double?
-        if bmiHeightPresent, b.count >= idx + 2 {
-            let rawBMI = UInt16(b[idx]) | (UInt16(b[idx + 1]) << 8)
-            bmi = Double(rawBMI) * 0.1
-        }
-
-        let reading = ScaleReading(weightKg: weightKg, bmi: bmi, timestamp: Date())
+        // Note: the standard payload may carry a BMI field (flag 0x08), but it is
+        // derived from a height stored on the scale that can only be set via the
+        // (discontinued) Qardio app. We ignore it and compute BMI in-app instead.
+        let reading = ScaleReading(weightKg: weightKg, timestamp: Date())
         DispatchQueue.main.async {
             self.lastReading = reading
             self.sessionActive = true
@@ -276,10 +265,11 @@ final class ScaleClient: NSObject, ObservableObject {
             return
         }
 
-        let bmi = (json["bmi"] as? String).flatMap(Double.init)
-        let reading = ScaleReading(weightKg: weightKg, bmi: bmi, timestamp: Date())
+        // The JSON also includes a "bmi" field, but it relies on a height set via
+        // the Qardio app; we ignore it and compute BMI in-app from a stored height.
+        let reading = ScaleReading(weightKg: weightKg, timestamp: Date())
 
-        log(String(format: "qardio measurement JSON decoded: %.1f kg%@", weightKg, bmi.map { String(format: ", BMI %.1f", $0) } ?? ""))
+        log(String(format: "qardio measurement JSON decoded: %.1f kg", weightKg))
 
         // Set the guard synchronously (delegate callbacks run on the main queue):
         // if a second result read is already in flight, it must see the flag set
