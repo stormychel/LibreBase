@@ -12,6 +12,11 @@ struct ContentView: View {
     @EnvironmentObject var health: Health
     @AppStorage("autoSaveToHealth") private var autoSaveToHealth = true
     @AppStorage("heightCm") private var heightCm = 0.0
+    @State private var showHeightSheet = false
+    @State private var pickerCm = 170.0
+
+    /// Show height in feet/inches in imperial regions, centimeters otherwise.
+    private var useMetric: Bool { Locale.current.measurementSystem == .metric }
 
     private var weightText: String {
         guard let r = scale.lastReading else { return "—" }
@@ -25,6 +30,75 @@ struct ContentView: View {
         guard let r = scale.lastReading, heightCm > 0 else { return nil }
         let m = heightCm / 100
         return r.weightKg / (m * m)
+    }
+
+    /// Current height rendered in the user's preferred unit, or a prompt if unset.
+    private var heightLabel: String {
+        guard heightCm > 0 else { return "Set height" }
+        if useMetric { return "\(Int(heightCm.rounded())) cm" }
+        let totalIn = Int((heightCm / 2.54).rounded())
+        return "\(totalIn / 12)′ \(totalIn % 12)″"
+    }
+
+    // Wheel bindings translate between the picker's whole-unit values and the
+    // canonical centimeter store. Feet and inches both derive from the same
+    // rounded total-inches value so they never disagree at a boundary.
+    private var pickerCmInt: Binding<Int> {
+        Binding(get: { Int(pickerCm.rounded()) }, set: { pickerCm = Double($0) })
+    }
+    private var pickerFeet: Binding<Int> {
+        Binding(get: { Int((pickerCm / 2.54).rounded()) / 12 },
+                set: { ft in
+                    let inch = Int((pickerCm / 2.54).rounded()) % 12
+                    pickerCm = Double(ft * 12 + inch) * 2.54
+                })
+    }
+    private var pickerInches: Binding<Int> {
+        Binding(get: { Int((pickerCm / 2.54).rounded()) % 12 },
+                set: { inch in
+                    let ft = Int((pickerCm / 2.54).rounded()) / 12
+                    pickerCm = Double(ft * 12 + inch) * 2.54
+                })
+    }
+
+    private var heightPicker: some View {
+        NavigationView {
+            Group {
+                if useMetric {
+                    Picker("Height", selection: pickerCmInt) {
+                        ForEach(120...220, id: \.self) { Text("\($0) cm").tag($0) }
+                    }
+                    .pickerStyle(.wheel)
+                } else {
+                    HStack(spacing: 0) {
+                        Picker("Feet", selection: pickerFeet) {
+                            ForEach(3...7, id: \.self) { Text("\($0) ft").tag($0) }
+                        }
+                        .pickerStyle(.wheel)
+                        .frame(maxWidth: .infinity)
+                        Picker("Inches", selection: pickerInches) {
+                            ForEach(0...11, id: \.self) { Text("\($0) in").tag($0) }
+                        }
+                        .pickerStyle(.wheel)
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+            .navigationTitle("Height")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        heightCm = pickerCm
+                        let cm = pickerCm
+                        showHeightSheet = false
+                        // Keep Apple Health in sync with the edit.
+                        Task { try? await health.saveHeight(cm: cm) }
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium])
     }
 
     var body: some View {
@@ -90,16 +164,19 @@ struct ContentView: View {
                 Toggle("Save to Apple Health", isOn: $autoSaveToHealth)
 
                 // Height — used to compute BMI in-app (the scale's BMI can't be
-                // trusted without the Qardio app).
-                HStack {
-                    Text("Height")
-                    Spacer()
-                    TextField("––", value: $heightCm, format: .number)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 64)
-                    Text("cm")
-                        .foregroundStyle(.secondary)
+                // trusted without the Qardio app). Tapping opens a unit-aware
+                // wheel picker; the choice is written back to Apple Health.
+                Button {
+                    pickerCm = heightCm > 0 ? heightCm : 170
+                    showHeightSheet = true
+                } label: {
+                    HStack {
+                        Text("Height")
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text(heightLabel)
+                            .foregroundStyle(heightCm > 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.accentColor))
+                    }
                 }
 
                 // Recon mode toggle (Phase 1 GATT capture) — always available so
@@ -150,6 +227,7 @@ struct ContentView: View {
             }
             .padding(.horizontal, 20)
             .navigationBarHidden(true)
+            .sheet(isPresented: $showHeightSheet) { heightPicker }
             .task {
                 // Register the save callback before awaiting authorization: the
                 // permission prompt suspends this task, and a weigh-in could
@@ -171,6 +249,13 @@ struct ContentView: View {
                     try await health.requestAuth()
                 } catch {
                     scale.status = "Health permission denied"
+                }
+
+                // Seed height from Apple Health when the user hasn't set one
+                // locally, so BMI works without manual entry. A manual value
+                // always wins — we never overwrite it.
+                if heightCm == 0, let h = await health.latestHeightCm() {
+                    heightCm = h
                 }
             }
         }

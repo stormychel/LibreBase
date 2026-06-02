@@ -12,11 +12,41 @@ import HealthKit
 final class Health: ObservableObject {
     let store = HKHealthStore()
 
-    /// Request permission to write body mass. We never read, so no read types.
+    /// Request permission to write body mass and height, and read height (for BMI).
     func requestAuth() async throws {
         guard HKHealthStore.isHealthDataAvailable() else { return }
         let mass = HKQuantityType(.bodyMass)
-        try await store.requestAuthorization(toShare: [mass], read: [])
+        let height = HKQuantityType(.height)
+        try await store.requestAuthorization(toShare: [mass, height], read: [height])
+    }
+
+    /// Save a height sample (centimeters) to Apple Health, keeping it in sync with
+    /// an edit made in the app.
+    func saveHeight(cm: Double) async throws {
+        let type = HKQuantityType(.height)
+        let quantity = HKQuantity(unit: .meterUnit(with: .centi), doubleValue: cm)
+        let sample = HKQuantitySample(type: type, quantity: quantity, start: Date(), end: Date())
+        try await store.save(sample)
+    }
+
+    /// Most recent height sample in centimeters, or nil if none is stored or read
+    /// access wasn't granted. HealthKit never reveals read denial, so callers must
+    /// treat nil as "unknown" and fall back to a manually entered height.
+    func latestHeightCm() async -> Double? {
+        guard HKHealthStore.isHealthDataAvailable() else { return nil }
+        let type = HKQuantityType(.height)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+        return await withCheckedContinuation { cont in
+            let query = HKSampleQuery(sampleType: type, predicate: nil,
+                                      limit: 1, sortDescriptors: [sort]) { _, samples, _ in
+                guard let sample = samples?.first as? HKQuantitySample else {
+                    cont.resume(returning: nil)
+                    return
+                }
+                cont.resume(returning: sample.quantity.doubleValue(for: .meterUnit(with: .centi)))
+            }
+            self.store.execute(query)
+        }
     }
 
     /// Save a weight sample (kilograms) to Apple Health.

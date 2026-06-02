@@ -5,9 +5,9 @@
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>LibreBase connects to your Qardio scale over Bluetooth to read your weight.</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>LibreBase does not read any data from Apple Health.</string>
+	<string>LibreBase reads your height from Apple Health to calculate your BMI.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>LibreBase saves your weight measurements to Apple Health.</string>
+	<string>LibreBase saves your weight, and any height you enter, to Apple Health.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 </dict>
