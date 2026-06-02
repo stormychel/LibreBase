@@ -18,9 +18,12 @@ struct ContentView: View {
     /// Show height in feet/inches in imperial regions, centimeters otherwise.
     private var useMetric: Bool { Locale.current.measurementSystem == .metric }
 
+    // Weight is always stored in kilograms; display it in the user's preferred
+    // unit (pounds in imperial regions). Saving to Health is unaffected.
     private var weightText: String {
         guard let r = scale.lastReading else { return "—" }
-        return String(format: "%.1f kg", r.weightKg)
+        if useMetric { return String(format: "%.1f kg", r.weightKg) }
+        return String(format: "%.1f lb", r.weightKg / 0.45359237)
     }
 
     // BMI is computed in-app from a locally stored height. We deliberately ignore
