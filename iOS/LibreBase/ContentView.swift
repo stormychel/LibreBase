@@ -160,6 +160,14 @@ struct ContentView: View {
                 .background(.ultraThinMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
+                // Retry button when disconnected. Placed above the settings on
+                // purpose: its appearance/disappearance shifts the UI, drawing
+                // attention to the fact that the scale needs to be reconnected.
+                if !scale.isConnected {
+                    Button("Retry Connect") { scale.startConnect() }
+                        .buttonStyle(.bordered)
+                }
+
                 // Save to Health toggle
                 Toggle("Save to Apple Health", isOn: $autoSaveToHealth)
 
@@ -205,12 +213,6 @@ struct ContentView: View {
                 }
 
                 Spacer(minLength: 8)
-
-                // Retry button when disconnected
-                if !scale.isConnected {
-                    Button("Retry Connect") { scale.startConnect() }
-                        .buttonStyle(.bordered)
-                }
 
                 // Footer
                 VStack(spacing: 4) {
