@@ -8,5 +8,7 @@
 	<string>LibreBase does not read any data from Apple Health.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>LibreBase saves your weight measurements to Apple Health.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
