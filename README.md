@@ -94,6 +94,60 @@ You want the genuine app's full exchange: any init writes, pairing, and the meas
 
 ## 4. Phase 3 — Decode
 
+### Current QardioBase B100 findings (2026-06-02)
+
+The tested unit does **not** expose standard Weight Scale (`0x181D`) or Body
+Composition (`0x181B`) services. It exposes Device Info, Battery, and a custom
+Qardio service:
+
+| UUID | Meaning observed |
+|------|------------------|
+| `A78AF805-8F3F-4E8F-A964-318B768BC38C` | control/state notify: `00` idle, `03` measuring, `06` done |
+| `9F3F4E1B-37D7-4F95-B374-CF585D808BEB` | noisy engineering/debug stream; also accepts config write `00 00 01 01` |
+| `B24F98BE-9CD4-4F82-B935-01F18F104EDE` | final measurement JSON; read after state `06` |
+| `1EC92A15-14E0-43E7-A990-CB37000990BA` | calibration JSON |
+
+Calibration read:
+
+```json
+{"0":"0","50":"5945","100":"11888","150":"17836","z":"523"}
+```
+
+This gives roughly `118.907` raw load-cell counts per kg. The `z` term appears
+to be a millikilogram correction (`523` → `+0.523 kg`).
+
+Known-good weight frame from a real weigh-in where the expected result was
+`87.4–87.7 kg`:
+
+```text
+21 70 28 10
+```
+
+Decode:
+
+```text
+raw = littleEndian(bytes[1...2]) = 0x2870 = 10352
+kg  = raw / 118.907 + 0.523 = 87.6 kg
+```
+
+Later research found the important shortcut: do **not** decode weight from the
+engineering stream unless necessary. After state `06`, read
+`B24F98BE-9CD4-4F82-B935-01F18F104EDE`; the scale returns plain UTF-8 JSON:
+
+```json
+{"weight":"76.0","bmi":"19.3","z":"2031","fat":"57","tbw":"31","bmc":"3","mt":"9","sm":"17"}
+```
+
+The app now reads and parses this JSON characteristic. The `9F3F...` frames are
+still useful for recon/state timing, but many of their 16-bit windows are false
+positives and can repeat between users.
+
+PacketLogger note: when the legacy Qardio app was running, the trace only showed
+QardioBase advertisements/scan responses, not ATT/BTATT. That suggests the
+official app may not be doing a live BLE GATT session in that setup (for example
+it may be relying on Wi-Fi/cloud/local cache), so the useful data for LibreBase
+currently comes from direct CoreBluetooth recon against the custom GATT profile.
+
 ### Weight
 Almost always a **little-endian 16-bit integer** with a fixed scale factor:
 - IEEE Weight Scale profile: units of **5 g** (multiply raw by 0.005 for kg).

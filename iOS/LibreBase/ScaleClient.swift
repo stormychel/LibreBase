@@ -40,8 +40,9 @@ final class ScaleClient: NSObject, ObservableObject {
 
     // MARK: - Recon (Phase 1)
     /// When true, discover ALL services/characteristics and log every payload as
-    /// hex. Leave on for the first real-device run to capture the GATT table.
-    @Published var reconMode = true
+    /// hex. Off for production — the QardioBase protocol is now decoded. Flip on
+    /// only to re-capture the GATT table from a new device.
+    @Published var reconMode = false
     @Published var reconLog: [String] = []
 
     /// Fires once per weigh-in when the scale stops sending updates.
@@ -52,6 +53,8 @@ final class ScaleClient: NSObject, ObservableObject {
     private var peripheral: CBPeripheral?
     private var weightChar: CBCharacteristic?
     private var batteryChar: CBCharacteristic?
+    private var qardioEngineeringChar: CBCharacteristic?
+    private var qardioMeasurementChar: CBCharacteristic?
 
     // Standard SIG services / characteristics
     private let weightScaleService  = CBUUID(string: "181D")
@@ -62,13 +65,15 @@ final class ScaleClient: NSObject, ObservableObject {
     private let batteryLevel        = CBUUID(string: "2A19")
     private let deviceInfoService   = CBUUID(string: "180A")
 
-    // QardioBase B100 custom profile (discovered via recon)
-    private let qbMeasure = CBUUID(string: "9F3F4E1B-37D7-4F95-B374-CF585D808BEB") // notify: measurement stream
+    // QardioBase B100 custom profile (discovered via recon, 2026-06-02).
+    // The reliable weight source is the final-result JSON on `qbResult`, gated on
+    // the `qbControl` "done" (0x06) state — see parseQardioMeasurementJSON. The
+    // noisy `qbMeasure` engineering stream is used only for the early
+    // `00 00 05 06` "result ready" marker; its raw frames are not decoded.
+    private let qbService = CBUUID(string: "C8219E89-93E0-4169-A3DC-EA7959E866AF")
+    private let qbMeasure = CBUUID(string: "9F3F4E1B-37D7-4F95-B374-CF585D808BEB") // notify: engineering/status stream
+    private let qbResult = CBUUID(string: "B24F98BE-9CD4-4F82-B935-01F18F104EDE") // read: final measurement JSON
     private let qbControl = CBUUID(string: "A78AF805-8F3F-4E8F-A964-318B768BC38C") // notify: state (00 idle, 03 measuring, 06 done)
-
-    /// Raw ADC counts per kilogram, from the scale's own calibration table
-    /// (char 1EC92A15 → {"50":"5945","100":"11888","150":"17836"} ≈ 118.9/kg).
-    private let rawPerKg = 118.907
 
     /// Advertised-name hint used to recognize the scale during the scan.
     private let nameHint = "qardio"
@@ -77,6 +82,11 @@ final class ScaleClient: NSObject, ObservableObject {
     private var completionWorkItem: DispatchWorkItem?
     private let completionDebounceSeconds: TimeInterval = 1.5
     private var sessionActive = false
+    private var qardioMeasurementActive = false
+    /// Guards against saving the same weigh-in twice: the result JSON is read on
+    /// both the `00 00 05 06` marker and the `control = 06` done state, so it can
+    /// decode more than once per session. Reset when a new measurement starts.
+    private var didFinalizeSession = false
 
     // Connect timeout
     private var connectTimeoutWorkItem: DispatchWorkItem?
@@ -98,6 +108,10 @@ final class ScaleClient: NSObject, ObservableObject {
 
         isConnected = false
         sessionActive = false
+        qardioMeasurementActive = false
+        didFinalizeSession = false
+        qardioEngineeringChar = nil
+        qardioMeasurementChar = nil
         lastReading = nil
         completionWorkItem?.cancel()
         connectTimeoutWorkItem?.cancel()
@@ -105,10 +119,10 @@ final class ScaleClient: NSObject, ObservableObject {
 
         status = "Searching for scale…"
         central.stopScan()
-        // In recon mode scan for everything (custom scales advertise vendor UUIDs);
-        // otherwise filter to the standard Weight Scale service.
-        central.scanForPeripherals(withServices: reconMode ? nil : [weightScaleService],
-                                   options: nil)
+        // Scan unfiltered: the QardioBase does not advertise its vendor service
+        // UUID, so a service-filtered scan never surfaces it. We match by name
+        // hint / advertised standard service in didDiscover instead.
+        central.scanForPeripherals(withServices: nil, options: nil)
 
         let work = DispatchWorkItem { [weak self] in
             guard let self = self, !self.isConnected else { return }
@@ -216,26 +230,52 @@ final class ScaleClient: NSObject, ObservableObject {
         data.map { String(format: "%02x", $0) }.joined(separator: " ")
     }
 
-    /// Scans a measurement frame for any 16-bit window that, divided by the
-    /// calibration slope, lands in human-weight range. The frame/offset that
-    /// matches the user's real weight pins the weight field. (Decoding aid only.)
-    private func weightCandidates(_ data: Data) -> String {
-        let b = [UInt8](data)
-        guard b.count >= 2 else { return "" }
-        var hits: [String] = []
-        for i in 0..<(b.count - 1) {
-            let le = Double(UInt16(b[i]) | (UInt16(b[i + 1]) << 8)) / rawPerKg
-            let be = Double(UInt16(b[i + 1]) | (UInt16(b[i]) << 8)) / rawPerKg
-            if (20...250).contains(le) { hits.append(String(format: "LE@%d=%.1f", i, le)) }
-            if (20...250).contains(be) { hits.append(String(format: "BE@%d=%.1f", i, be)) }
+    private func readQardioMeasurementJSON() {
+        guard let peripheral, let qardioMeasurementChar else {
+            log("qardio measurement JSON: B24F98BE characteristic not discovered")
+            return
         }
-        return hits.isEmpty ? "" : "  ?kg{ \(hits.joined(separator: " ")) }"
+        peripheral.readValue(for: qardioMeasurementChar)
+    }
+
+    /// Final QardioBase result. Unlike the noisy engineering stream, this is
+    /// plain UTF-8 JSON, e.g. {"weight":"76.0","bmi":"19.3",...}.
+    private func parseQardioMeasurementJSON(_ data: Data) {
+        // The result is read on two triggers per weigh-in; only save it once.
+        guard !didFinalizeSession else { return }
+
+        guard
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let weightText = json["weight"] as? String,
+            let weightKg = Double(weightText),
+            isValidWeight(weightKg)
+        else {
+            if let text = String(data: data, encoding: .utf8), !text.isEmpty {
+                log("qardio measurement JSON unparsed: \(text)")
+            }
+            return
+        }
+
+        let bmi = (json["bmi"] as? String).flatMap(Double.init)
+        let reading = ScaleReading(weightKg: weightKg, bmi: bmi, timestamp: Date())
+
+        log(String(format: "qardio measurement JSON decoded: %.1f kg%@", weightKg, bmi.map { String(format: ", BMI %.1f", $0) } ?? ""))
+
+        DispatchQueue.main.async {
+            self.didFinalizeSession = true
+            self.lastReading = reading
+            self.sessionActive = false
+            self.qardioMeasurementActive = false
+            self.status = "Connected — reading saved"
+            self.onFinalReading?(reading)
+        }
     }
 
     private func controlStateName(_ data: Data) -> String {
         guard let v = data.first else { return "?" }
         switch v {
         case 0x00: return "idle"
+        case 0x01: return "config"
         case 0x03: return "measuring"
         case 0x06: return "done"
         default:   return String(format: "0x%02x", v)
@@ -276,9 +316,11 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
 
         let advertisesWeightScale =
             (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID])?.contains(weightScaleService) ?? false
+        let advertisesQardioBase =
+            (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID])?.contains(qbService) ?? false
 
         // Accept by name hint or by advertised standard service.
-        guard advName.localizedCaseInsensitiveContains(nameHint) || advertisesWeightScale || !reconMode else {
+        guard advName.localizedCaseInsensitiveContains(nameHint) || advertisesWeightScale || advertisesQardioBase else {
             return
         }
 
@@ -295,7 +337,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         status = "Connected — discovering…"
         // Recon: discover everything. Otherwise just the services we need.
         p.discoverServices(reconMode ? nil
-            : [weightScaleService, bodyCompService, batteryService, deviceInfoService])
+            : [weightScaleService, bodyCompService, batteryService, deviceInfoService, qbService])
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
@@ -308,6 +350,9 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         status = "Disconnected"
         weightChar = nil
         batteryChar = nil
+        qardioEngineeringChar = nil
+        qardioMeasurementChar = nil
+        qardioMeasurementActive = false
         updateBatteryStatus(nil)
     }
 
@@ -326,6 +371,17 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
             case weightMeasurement, bodyCompMeasurement:
                 weightChar = ch
                 p.setNotifyValue(true, for: ch)
+            case qbControl:
+                // State machine (00 idle, 03 measuring, 06 done) — drives the
+                // result read. Required: without this notify the scale is silent.
+                p.setNotifyValue(true, for: ch)
+            case qbMeasure:
+                qardioEngineeringChar = ch
+                if ch.properties.contains(.notify) || ch.properties.contains(.indicate) {
+                    p.setNotifyValue(true, for: ch)
+                }
+            case qbResult:
+                qardioMeasurementChar = ch
             case batteryLevel:
                 batteryChar = ch
                 p.readValue(for: ch)
@@ -343,10 +399,10 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
                 }
             }
         }
-        if weightChar != nil {
+        if weightChar != nil || qardioMeasurementChar != nil {
             status = "Connected — step on the scale"
         } else if !reconMode {
-            status = "Scale found, but no standard weight service. Enable recon."
+            status = "Scale found, but no supported weight service."
         }
     }
 
@@ -359,8 +415,28 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         switch ch.uuid {
         case qbControl:
             log("<- control: \(hex(data)) [\(controlStateName(data))]")
+            switch data.first {
+            case 0x03:
+                // New weigh-in starting — arm finalize and clear the guard.
+                qardioMeasurementActive = true
+                sessionActive = true
+                didFinalizeSession = false
+                status = "Measuring…"
+            case 0x06:
+                qardioMeasurementActive = false
+                readQardioMeasurementJSON()
+            case 0x00:
+                qardioMeasurementActive = false
+            default:
+                break
+            }
         case qbMeasure:
-            log("<- measure: \(hex(data))\(weightCandidates(data))")
+            log("<- measure: \(hex(data))")
+            // The only frame we act on is the "result ready" marker, a slightly
+            // earlier trigger than control=06 for reading the result JSON.
+            if data.count >= 4, data[0] == 0x00, data[1] == 0x00, data[2] == 0x05, data[3] == 0x06 {
+                readQardioMeasurementJSON()
+            }
         default:
             log("<- \(ch.uuid): \(hex(data))")
         }
@@ -368,6 +444,8 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         switch ch.uuid {
         case weightMeasurement:
             parseWeight(data)
+        case qbResult:
+            parseQardioMeasurementJSON(data)
         case batteryLevel:
             if !data.isEmpty {
                 let level = Int(data[0])
