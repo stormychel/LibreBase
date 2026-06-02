@@ -261,8 +261,12 @@ final class ScaleClient: NSObject, ObservableObject {
 
         log(String(format: "qardio measurement JSON decoded: %.1f kg%@", weightKg, bmi.map { String(format: ", BMI %.1f", $0) } ?? ""))
 
+        // Set the guard synchronously (delegate callbacks run on the main queue):
+        // if a second result read is already in flight, it must see the flag set
+        // here, not later inside the async block, or it would save twice.
+        didFinalizeSession = true
+
         DispatchQueue.main.async {
-            self.didFinalizeSession = true
             self.lastReading = reading
             self.sessionActive = false
             self.qardioMeasurementActive = false
@@ -368,7 +372,11 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
             log("  char: \(ch.uuid) [\(propString(ch.properties))]")
 
             switch ch.uuid {
-            case weightMeasurement, bodyCompMeasurement:
+            case weightMeasurement:
+                // Only the standard Weight Measurement (0x2A9D) is parsed. Body
+                // Composition (0x2A9C) has a different layout and no parser yet,
+                // so we don't subscribe to it — subscribing would mark the scale
+                // "supported" and then never produce a reading.
                 weightChar = ch
                 p.setNotifyValue(true, for: ch)
             case qbControl:
