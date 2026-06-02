@@ -175,7 +175,7 @@ final class ScaleClient: NSObject, ObservableObject {
             return
         }
         sessionActive = false
-        status = "Connected — reading saved"
+        status = "Weigh-in complete"
         onFinalReading?(reading)
     }
 
@@ -270,7 +270,7 @@ final class ScaleClient: NSObject, ObservableObject {
             self.lastReading = reading
             self.sessionActive = false
             self.qardioMeasurementActive = false
-            self.status = "Connected — reading saved"
+            self.status = "Weigh-in complete"
             self.onFinalReading?(reading)
         }
     }

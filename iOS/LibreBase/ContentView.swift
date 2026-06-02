@@ -124,17 +124,26 @@ struct ContentView: View {
             .padding(.horizontal, 20)
             .navigationBarHidden(true)
             .task {
+                // Register the save callback before awaiting authorization: the
+                // permission prompt suspends this task, and a weigh-in could
+                // finalize while it's up. Installing it first avoids dropping
+                // that first reading.
+                scale.onFinalReading = { reading in
+                    guard autoSaveToHealth else { return }
+                    Task { @MainActor in
+                        do {
+                            try await health.saveWeight(kg: reading.weightKg, date: reading.timestamp)
+                            scale.status = "Saved to Apple Health"
+                        } catch {
+                            scale.status = "Couldn't save to Health — check Settings ▸ Privacy ▸ Health"
+                        }
+                    }
+                }
+
                 do {
                     try await health.requestAuth()
                 } catch {
                     scale.status = "Health permission denied"
-                }
-
-                scale.onFinalReading = { reading in
-                    guard autoSaveToHealth else { return }
-                    Task {
-                        try? await health.saveWeight(kg: reading.weightKg, date: reading.timestamp)
-                    }
                 }
             }
         }
