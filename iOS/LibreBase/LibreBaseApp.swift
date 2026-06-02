@@ -11,12 +11,17 @@ import SwiftUI
 struct LibreBaseApp: App {
     @StateObject private var scale = ScaleClient()
     @StateObject private var health = Health()
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environmentObject(scale)
-                .environmentObject(health)
+            if hasCompletedOnboarding {
+                ContentView()
+                    .environmentObject(scale)
+                    .environmentObject(health)
+            } else {
+                OnboardingView()
+            }
         }
     }
 }
