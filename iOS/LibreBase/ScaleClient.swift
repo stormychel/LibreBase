@@ -83,9 +83,11 @@ final class ScaleClient: NSObject, ObservableObject {
     private let completionDebounceSeconds: TimeInterval = 1.5
     private var sessionActive = false
     private var qardioMeasurementActive = false
-    /// Keep a pending reconnect alive after the scale drops the link post-weigh-in,
-    /// so stepping back on records another reading automatically.
-    private var autoReconnect = true
+    /// Set true only when we drop the link on purpose (e.g. Retry). The resulting
+    /// `didDisconnectPeripheral` then skips the automatic reconnect instead of
+    /// racing a fresh scan. Any *unexpected* disconnect (the scale powering down
+    /// after a weigh-in) leaves this false and triggers the pending reconnect.
+    private var intentionalDisconnect = false
     /// Guards against saving the same weigh-in twice: the result JSON is read on
     /// both the `00 00 05 06` marker and the `control = 06` done state, so it can
     /// decode more than once per session. Reset when a new measurement starts.
@@ -119,8 +121,12 @@ final class ScaleClient: NSObject, ObservableObject {
         completionWorkItem?.cancel()
         connectTimeoutWorkItem?.cancel()
         // Drop any pending auto-reconnect so we don't end up with two connection
-        // attempts to the same peripheral when the user taps Retry.
-        if let peripheral { central.cancelPeripheralConnection(peripheral) }
+        // attempts to the same peripheral when the user taps Retry. Mark it
+        // intentional so didDisconnectPeripheral doesn't immediately re-queue it.
+        if let peripheral {
+            intentionalDisconnect = true
+            central.cancelPeripheralConnection(peripheral)
+        }
         if reconMode { reconLog.removeAll() }
 
         status = "Searching for scale…"
@@ -132,8 +138,16 @@ final class ScaleClient: NSObject, ObservableObject {
 
         let work = DispatchWorkItem { [weak self] in
             guard let self = self, !self.isConnected else { return }
-            self.central.stopScan()
-            self.status = "No scale found. Step on the scale to wake it, then retry."
+            if self.peripheral == nil {
+                // Never even discovered the scale.
+                self.central.stopScan()
+                self.status = "No scale found. Step on the scale to wake it, then retry."
+            } else {
+                // Discovered, but the connect hasn't completed — the scale likely
+                // went back to sleep. The pending connect stays queued and will
+                // complete on its own when it wakes on the next step-on.
+                self.status = "Step on the scale to wake it…"
+            }
         }
         connectTimeoutWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: work)
@@ -334,8 +348,10 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
             return
         }
 
+        // Keep the connect timeout running: it's cancelled in didConnect. If the
+        // scale sleeps before the connect completes, the timeout fires and the
+        // pending connect stays queued to finish when it wakes.
         central.stopScan()
-        connectTimeoutWorkItem?.cancel()
         status = "Connecting…"
         self.peripheral = p
         p.delegate = self
@@ -346,6 +362,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         isConnected = true
         connectTimeoutWorkItem?.cancel()
         // Fresh connection → clean session state so the next step-on records.
+        intentionalDisconnect = false
         sessionActive = false
         didFinalizeSession = false
         qardioMeasurementActive = false
@@ -357,7 +374,8 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     func centralManager(_ central: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
         isConnected = false
-        status = "Failed to connect"
+        intentionalDisconnect = false
+        status = "Couldn't connect — step on the scale and tap Retry"
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
@@ -369,16 +387,20 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         qardioMeasurementActive = false
         updateBatteryStatus(nil)
 
-        // The QardioBase powers down its radio after a weigh-in and drops the
-        // link. Issue a pending reconnect with no timeout: CoreBluetooth keeps
-        // it queued and reconnects automatically the moment the scale wakes on
-        // the next step-on — so repeated weigh-ins record without tapping Retry.
-        if autoReconnect {
-            status = "Step on the scale to weigh again"
-            central.connect(p, options: nil)
-        } else {
-            status = "Disconnected"
+        // A deliberate teardown (Retry) is owned by startConnect — don't fight it
+        // by re-queuing a connect to the peripheral we just dropped.
+        if intentionalDisconnect {
+            intentionalDisconnect = false
+            return
         }
+
+        // Otherwise this was unexpected: the QardioBase powers down its radio
+        // after a weigh-in and drops the link. Issue a pending reconnect with no
+        // timeout — CoreBluetooth keeps it queued and reconnects the moment the
+        // scale wakes on the next step-on, so repeated weigh-ins record without
+        // tapping Retry.
+        status = "Step on the scale to weigh again"
+        central.connect(p, options: nil)
     }
 
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
