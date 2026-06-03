@@ -5,18 +5,35 @@
 //  Created by Michel Storms on 02/06/2026.
 //
 
+import CoreBluetooth
+import HealthKit
 import SwiftUI
 
-/// First-run walkthrough: a short, branded introduction that sets expectations
-/// before the system permission prompts appear on the main screen. Three steps —
-/// welcome, how it works, and a privacy/permissions primer — styled with the
-/// icon's teal gradient (see `Brand`). Completion is recorded in
-/// `hasCompletedOnboarding`, gated by `LibreBaseApp`.
+/// First-run walkthrough: a short, branded introduction that asks for the two
+/// permissions LibreBase needs — Bluetooth and Apple Health — in context, before
+/// the everyday screen. Styled with the icon's teal gradient (see `Brand`).
+/// Completion is recorded in `hasCompletedOnboarding`, gated by `LibreBaseApp`.
 struct OnboardingView: View {
+    @EnvironmentObject var scale: ScaleClient
+    @EnvironmentObject var health: Health
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @Environment(\.scenePhase) private var scenePhase
     @State private var step = 0
 
+    // Permission state — mirrored from the system so each row can show its status.
+    @State private var bluetoothGranted = false
+    @State private var bluetoothDenied = false
+    @State private var bluetoothPrompted = false
+    @State private var healthGranted = false
+    @State private var healthDenied = false
+    @State private var healthPrompted = false
+
     private let totalSteps = 3
+
+    /// Both prompts must have been answered before the user can continue — denial
+    /// is fine (they can fix it later in Settings), but we don't let them skip the
+    /// ask entirely, since the app does nothing without them.
+    private var allPermissionsPrompted: Bool { bluetoothPrompted && healthPrompted }
 
     var body: some View {
         ZStack {
@@ -35,7 +52,7 @@ struct OnboardingView: View {
                             switch step {
                             case 0: welcomeStep
                             case 1: howItWorksStep
-                            default: privacyStep
+                            default: permissionsStep
                             }
                         }
                         .frame(minHeight: geo.size.height)
@@ -44,6 +61,9 @@ struct OnboardingView: View {
                     }
                 }
             }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { refreshPermissions() }
         }
     }
 
@@ -126,14 +146,14 @@ struct OnboardingView: View {
         }
     }
 
-    // MARK: - Step 2: Privacy & permissions primer
+    // MARK: - Step 2: Permissions
 
-    private var privacyStep: some View {
-        VStack(spacing: 28) {
+    private var permissionsStep: some View {
+        VStack(spacing: 26) {
             Spacer()
 
             Image(systemName: "lock.shield.fill")
-                .font(.system(size: 60))
+                .font(.system(size: 56))
                 .foregroundStyle(Brand.teal)
 
             VStack(spacing: 8) {
@@ -147,25 +167,73 @@ struct OnboardingView: View {
                     .padding(.horizontal, 28)
             }
 
-            VStack(alignment: .leading, spacing: 22) {
-                infoRow(
+            VStack(spacing: 12) {
+                permissionRow(
                     icon: "dot.radiowaves.left.and.right",
                     title: "Bluetooth",
-                    detail: "To find your QardioBase and read each weigh-in."
+                    description: "To find your QardioBase and read each weigh-in.",
+                    granted: bluetoothGranted,
+                    denied: bluetoothDenied,
+                    requestTitle: "Allow",
+                    request: requestBluetooth
                 )
-                infoRow(
+                permissionRow(
                     icon: "heart.text.square.fill",
                     title: "Apple Health",
-                    detail: "To save your weight, and read your height so BMI is accurate."
+                    description: "To save your weight, and read your height for BMI.",
+                    granted: healthGranted,
+                    denied: healthDenied,
+                    requestTitle: "Allow",
+                    request: requestHealth
                 )
             }
-            .padding(.horizontal, 28)
+            .padding(.horizontal, 24)
 
             Spacer()
 
-            primaryButton("Connect my scale") {
+            primaryButton("Connect my scale", enabled: allPermissionsPrompted) {
                 withAnimation { hasCompletedOnboarding = true }
             }
+        }
+        .onAppear(perform: refreshPermissions)
+    }
+
+    // MARK: - Permission requests
+
+    private func requestBluetooth() {
+        bluetoothPrompted = true
+        // Building the central is what raises the system Bluetooth prompt.
+        scale.start()
+        // The authorization resolves without a scene-phase change, so poll briefly
+        // to reflect the user's choice on the row.
+        for delay in [1.0, 2.5] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { refreshPermissions() }
+        }
+    }
+
+    private func requestHealth() {
+        healthPrompted = true
+        Task {
+            try? await health.requestAuth()
+            await MainActor.run { refreshPermissions() }
+        }
+    }
+
+    private func refreshPermissions() {
+        let bt = CBCentralManager.authorization
+        bluetoothGranted = bt == .allowedAlways
+        bluetoothDenied = bt == .denied || bt == .restricted
+        if bluetoothGranted || bluetoothDenied { bluetoothPrompted = true }
+
+        let h = health.bodyMassWriteStatus
+        healthGranted = h == .sharingAuthorized
+        healthDenied = h == .sharingDenied
+        if healthGranted || healthDenied { healthPrompted = true }
+    }
+
+    private func openSettings() {
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url)
         }
     }
 
@@ -189,7 +257,50 @@ struct OnboardingView: View {
         }
     }
 
-    private func primaryButton(_ title: String, action: @escaping () -> Void) -> some View {
+    @ViewBuilder
+    private func permissionRow(
+        icon: String,
+        title: String,
+        description: String,
+        granted: Bool,
+        denied: Bool,
+        requestTitle: String,
+        request: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundStyle(Brand.teal)
+                .frame(width: 34)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            if granted {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.green)
+            } else if denied {
+                Button("Settings") { openSettings() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            } else {
+                Button(requestTitle) { request() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .tint(Brand.teal)
+            }
+        }
+        .padding()
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func primaryButton(_ title: String, enabled: Bool = true, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(.headline)
@@ -198,12 +309,10 @@ struct OnboardingView: View {
                 .padding(.vertical, 16)
                 .background(Brand.gradient, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .shadow(color: Brand.deep.opacity(0.3), radius: 10, y: 5)
+                .opacity(enabled ? 1 : 0.4)
         }
+        .disabled(!enabled)
         .padding(.horizontal, 24)
         .padding(.bottom, 32)
     }
-}
-
-#Preview {
-    OnboardingView()
 }

@@ -111,6 +111,11 @@ struct ContentView: View {
         .sheet(isPresented: $showHeightSheet) { heightPicker }
         .sheet(isPresented: $showSettings) { settingsSheet }
         .task {
+            // Safety net: onboarding normally creates the Bluetooth central in its
+            // permission step, but users upgrading past onboarding never saw it —
+            // start it here too. Idempotent.
+            scale.start()
+
             // Register the save callback before awaiting authorization: the
             // permission prompt suspends this task, and a weigh-in could
             // finalize while it's up. Installing it first avoids dropping

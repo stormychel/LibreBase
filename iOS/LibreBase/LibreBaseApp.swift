@@ -21,6 +21,8 @@ struct LibreBaseApp: App {
                     .environmentObject(health)
             } else {
                 OnboardingView()
+                    .environmentObject(scale)
+                    .environmentObject(health)
             }
         }
     }

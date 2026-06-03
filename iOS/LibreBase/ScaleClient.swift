@@ -48,7 +48,10 @@ final class ScaleClient: NSObject, ObservableObject {
     var onFinalReading: ((ScaleReading) -> Void)?
 
     // MARK: - BLE
-    private var central: CBCentralManager!
+    /// Created on demand by `start()` rather than in `init`: building the central
+    /// is what triggers the system Bluetooth permission prompt, and we want that
+    /// to happen in onboarding's permission step — not in the app's first frame.
+    private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var weightChar: CBCharacteristic?
     private var batteryChar: CBCharacteristic?
@@ -95,17 +98,22 @@ final class ScaleClient: NSObject, ObservableObject {
     // Connect timeout
     private var connectTimeoutWorkItem: DispatchWorkItem?
 
-    // MARK: - Lifecycle
-    override init() {
-        super.init()
-        central = CBCentralManager(delegate: self, queue: .main)
-    }
-
     // MARK: - Public API
+
+    /// Create the Bluetooth central — which is what raises the system Bluetooth
+    /// permission prompt. Called from onboarding's permission step (so the prompt
+    /// appears in context), and again from the main screen as a safety net for
+    /// users upgrading past onboarding. Idempotent. Once the central reports
+    /// `.poweredOn`, `centralManagerDidUpdateState` kicks off the first connect.
+    func start() {
+        if central == nil {
+            central = CBCentralManager(delegate: self, queue: .main)
+        }
+    }
 
     /// Begin scanning/connecting to the scale. Call on app start or on Retry.
     func startConnect(timeout: TimeInterval = 30) {
-        guard central.state == .poweredOn else {
+        guard let central, central.state == .poweredOn else {
             status = "Bluetooth unavailable"
             return
         }
@@ -139,7 +147,7 @@ final class ScaleClient: NSObject, ObservableObject {
             guard let self = self, !self.isConnected else { return }
             if self.peripheral == nil {
                 // Never even discovered the scale.
-                self.central.stopScan()
+                self.central?.stopScan()
                 self.status = "No scale found. Step on the scale to wake it, then retry."
             } else {
                 // Discovered, but the connect hasn't completed — the scale likely

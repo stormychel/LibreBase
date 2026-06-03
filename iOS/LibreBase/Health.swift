@@ -20,6 +20,13 @@ final class Health: ObservableObject {
         try await store.requestAuthorization(toShare: [mass, height], read: [height])
     }
 
+    /// Share (write) authorization for body mass. HealthKit never reveals *read*
+    /// authorization, so this is the only status onboarding can reflect — enough
+    /// to know whether the permission sheet has been answered.
+    var bodyMassWriteStatus: HKAuthorizationStatus {
+        store.authorizationStatus(for: HKQuantityType(.bodyMass))
+    }
+
     /// Save a height sample (centimeters) to Apple Health, keeping it in sync with
     /// an edit made in the app.
     func saveHeight(cm: Double) async throws {
