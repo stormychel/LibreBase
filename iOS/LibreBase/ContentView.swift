@@ -415,6 +415,9 @@ struct ContentView: View {
                     Link(destination: Constants.supportMailURL) {
                         Label("Support", systemImage: "envelope")
                     }
+                    Link(destination: Constants.scaleReportMailURL) {
+                        Label("Report your scale", systemImage: "exclamationmark.bubble")
+                    }
                     Link(destination: Constants.privacyURL) {
                         Label("Privacy Policy", systemImage: "hand.raised")
                     }
@@ -430,11 +433,12 @@ struct ContentView: View {
                 } header: {
                     Text("Support & Legal")
                 } footer: {
-                    HStack {
-                        Spacer()
+                    VStack(spacing: 10) {
+                        Text("LibreBase is tested only with the original QardioBase (1st gen). Have a QardioBase 2 or X? Tap “Report your scale” — we'd love to help support it.")
                         Text(Constants.versionLabel + " · open source, MIT licensed.")
-                        Spacer()
                     }
+                    .frame(maxWidth: .infinity)
+                    .multilineTextAlignment(.center)
                     .padding(.top, 8)
                 }
             }

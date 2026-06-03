@@ -11,14 +11,43 @@ import Foundation
 /// Settings. Mirrors the convention used across the other apps — a support
 /// mailto that auto-tags the version, plus hosted legal URLs.
 enum Constants {
-    // Support
-    static let supportEmail = "michelstorms@icloud.com"
-    static var supportMailURL: URL {
+    // Support — dedicated catch-all address for LibreBase.
+    static let supportEmail = "librebaseapp@michelstorms.dev"
+
+    private static var versionBuild: (version: String, build: String) {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
-        let subject = "LibreBase v\(version)-\(build) support request"
-            .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        return URL(string: "mailto:\(supportEmail)?subject=\(subject)")!
+        return (version, build)
+    }
+
+    private static func mailto(subject: String, body: String = "") -> URL {
+        let s = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        var url = "mailto:\(supportEmail)?subject=\(s)"
+        if !body.isEmpty {
+            url += "&body=\(body.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
+        }
+        return URL(string: url)!
+    }
+
+    static var supportMailURL: URL {
+        let (v, b) = versionBuild
+        return mailto(subject: "LibreBase v\(v)-\(b) support request")
+    }
+
+    /// We've only verified the original QardioBase — invite owners of other Base
+    /// models to write in with their results so we can try to support them.
+    static var scaleReportMailURL: URL {
+        let (v, b) = versionBuild
+        return mailto(
+            subject: "LibreBase — my Qardio scale",
+            body: """
+            Which Qardio model do you have (e.g. QardioBase 2 or QardioBase X)? \
+            Did LibreBase connect and read your weight? Anything you can share \
+            helps us support more scales — thank you!
+
+            (LibreBase \(v)-\(b))
+            """
+        )
     }
 
     // Source — LibreBase is open source (MIT).

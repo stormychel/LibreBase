@@ -15,7 +15,7 @@ When Qardio Inc. shut down in 2025 — app delisted, servers dark — the scales
 
 </div>
 
-> **Compatibility:** tested only with the **original QardioBase (1st generation, model B100)**. QardioBase 2 and QardioBase X are **untested** — they may work, but no promises. Capture logs from those models are very welcome (see [Contributing](#contributing)).
+> **Compatibility:** tested only with the **original QardioBase (1st generation, model B100)**. QardioBase 2 and QardioBase X are **untested** — they may work, but no promises. **Have another Qardio Base?** Please try LibreBase and tell us how it went — email **librebaseapp@michelstorms.dev** or send a capture log (see [Contributing](#contributing)). Your reports help us support more scales.
 
 ---
 

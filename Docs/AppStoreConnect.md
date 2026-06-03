@@ -17,15 +17,17 @@ the layout the other apps use:
 
 ```
 metadata/
-├── app-info/en-US.json        # name, subtitle, privacyPolicyUrl
-└── version/1.0/en-US.json     # description, keywords, promotionalText, urls
+├── app-info/en-US.json          # name, subtitle, privacyPolicyUrl
+└── version/1.0.0/en-US.json     # description, keywords, promotionalText, urls
 ```
 
-Edit locally, validate, then push:
+The version folder name and `--version` must match the **ASC** version string,
+which is `1.0.0` (and matches the build's `MARKETING_VERSION`). Edit locally,
+validate, then push:
 
 ```bash
 asc metadata validate --dir ./metadata
-asc metadata push --app 6775892745 --version 1.0 --dir ./metadata
+asc metadata push --app 6775892745 --version 1.0.0 --platform IOS --dir ./metadata
 ```
 
 ## Screenshots
