@@ -224,6 +224,15 @@ struct OnboardingView: View {
     }
 
     private func refreshPermissions() {
+        // App Store capture must look identical on every simulator regardless of
+        // its real authorization history, so show a fixed "both granted" state
+        // rather than querying live permissions.
+        if ScreenshotMode.isActive {
+            bluetoothGranted = true; bluetoothDenied = false; bluetoothPrompted = true
+            healthGranted = true; healthDenied = false; healthPrompted = true
+            return
+        }
+
         let bt = CBCentralManager.authorization
         bluetoothGranted = bt == .allowedAlways
         bluetoothDenied = bt == .denied || bt == .restricted
