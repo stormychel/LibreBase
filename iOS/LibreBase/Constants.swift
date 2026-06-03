@@ -25,6 +25,9 @@ enum Constants {
     static let githubURL = URL(string: "https://github.com/stormychel/LibreBase")!
     static let licenseURL = URL(string: "https://github.com/stormychel/LibreBase/blob/main/LICENSE")!
 
+    // More from the same developer.
+    static let otherAppsURL = URL(string: "https://michelstorms.com/apps.html")!
+
     // Legal — hosted alongside the other apps' policies.
     static let privacyURL = URL(string: "https://michelstorms.com/librebase/privacy/")!
 

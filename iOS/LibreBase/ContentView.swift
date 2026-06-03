@@ -421,6 +421,9 @@ struct ContentView: View {
                     Link(destination: Constants.licenseURL) {
                         Label("License (MIT)", systemImage: "doc.text")
                     }
+                    Link(destination: Constants.otherAppsURL) {
+                        Label("My Other Apps", systemImage: "square.grid.2x2")
+                    }
                 } header: {
                     Text("Support & Legal")
                 } footer: {
