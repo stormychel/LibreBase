@@ -202,18 +202,26 @@ struct ContentView: View {
     // MARK: - Status pills
 
     private var statusPills: some View {
-        HStack(spacing: 10) {
-            pill(
-                systemImage: scale.isConnected ? "dot.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash",
-                text: scale.status,
-                tint: scale.isConnected ? Brand.teal : .orange
-            )
-            Spacer(minLength: 0)
-            pill(
-                systemImage: batterySymbol,
-                text: batteryShort,
-                tint: batteryTint
-            )
+        // The status carries full sentences ("Step on the scale to weigh again"),
+        // so it takes the remaining width and wraps to two lines rather than
+        // truncating; the battery stays compact and fixed-width beside it.
+        HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: scale.isConnected ? "dot.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
+                    .foregroundStyle(scale.isConnected ? Brand.teal : .orange)
+                Text(scale.status)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .font(.footnote)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            pill(systemImage: batterySymbol, text: batteryShort, tint: batteryTint)
+                .fixedSize()
         }
     }
 
