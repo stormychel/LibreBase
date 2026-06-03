@@ -188,6 +188,8 @@ struct ContentView: View {
 
             Spacer()
 
+            batteryIndicator
+
             Button {
                 showSettings = true
             } label: {
@@ -199,44 +201,40 @@ struct ContentView: View {
         }
     }
 
+    /// Compact battery readout (glyph + percentage, no label) shown left of the
+    /// Settings gear in the header.
+    private var batteryIndicator: some View {
+        HStack(spacing: 4) {
+            Image(systemName: batterySymbol)
+                .foregroundStyle(batteryTint)
+            Text(batteryPercent)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+        .font(.subheadline)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(scale.batteryLevelPct.map { "Battery \($0) percent" } ?? "Battery level unknown")
+    }
+
     // MARK: - Status pills
 
     private var statusPills: some View {
-        // The status carries full sentences ("Step on the scale to weigh again"),
-        // so it takes the remaining width and wraps to two lines rather than
-        // truncating; the battery stays compact and fixed-width beside it.
-        HStack(alignment: .top, spacing: 10) {
-            HStack(alignment: .top, spacing: 6) {
-                Image(systemName: scale.isConnected ? "dot.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
-                    .foregroundStyle(scale.isConnected ? Brand.teal : .orange)
-                Text(scale.status)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .font(.footnote)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-            pill(systemImage: batterySymbol, text: batteryShort, tint: batteryTint)
-                .fixedSize()
-        }
-    }
-
-    private func pill(systemImage: String, text: String, tint: Color) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: systemImage)
-                .foregroundStyle(tint)
-            Text(text)
+        // Full-width status chip — the status carries full sentences ("Step on the
+        // scale to weigh again"), so it wraps to two lines rather than truncating.
+        // Battery now lives in the header, so this takes the whole row.
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: scale.isConnected ? "dot.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
+                .foregroundStyle(scale.isConnected ? Brand.teal : .orange)
+            Text(scale.status)
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .font(.footnote)
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(.ultraThinMaterial, in: Capsule())
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private var batterySymbol: String {
@@ -249,8 +247,8 @@ struct ContentView: View {
         }
     }
 
-    private var batteryShort: String {
-        guard let pct = scale.batteryLevelPct else { return "Battery —" }
+    private var batteryPercent: String {
+        guard let pct = scale.batteryLevelPct else { return "—" }
         return "\(pct)%"
     }
 
