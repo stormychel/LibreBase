@@ -41,9 +41,12 @@ struct ReportScaleView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { finish() }
+                    Button("Done") { dismiss() }
                 }
             }
+            // Stop capturing on every dismissal path (Done *or* swipe-down) so
+            // recon mode never leaks past this screen, as the disclosure promises.
+            .onDisappear { scale.reconMode = false }
             .sheet(isPresented: $showMail) {
                 MailView(
                     recipients: [Constants.supportEmail],
@@ -175,7 +178,7 @@ struct ReportScaleView: View {
         return .init(data: data, mimeType: "text/plain", fileName: "librebase-capture.txt")
     }
 
-    /// Hardware identifier (e.g. "iPhone16,2") — more useful than the generic
+    /// Hardware identifier (for example "iPhone16,2") — more useful than the generic
     /// `UIDevice.model` when diagnosing a Bluetooth stack difference.
     private var deviceModelIdentifier: String {
         var systemInfo = utsname()
@@ -185,11 +188,6 @@ struct ReportScaleView: View {
             guard let value = element.value as? Int8, value != 0 else { return }
             result.append(Character(UnicodeScalar(UInt8(value))))
         }
-    }
-
-    private func finish() {
-        scale.reconMode = false   // stop capturing when leaving the flow
-        dismiss()
     }
 }
 
