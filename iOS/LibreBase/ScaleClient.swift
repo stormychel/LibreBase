@@ -111,6 +111,16 @@ final class ScaleClient: NSObject, ObservableObject {
         }
     }
 
+    /// Populate a believable weigh-in for App Store screenshots (see
+    /// `ScreenshotMode`). Never called in normal use.
+    func loadDemoReading() {
+        isConnected = true
+        batteryLevelPct = 84
+        batteryStatusLine = "Battery: 84%"
+        status = "Weigh-in complete"
+        lastReading = ScaleReading(weightKg: 72.6, timestamp: Date())
+    }
+
     /// Resume scanning after the app returns to the foreground — iOS suspends BLE
     /// scans while backgrounded, so a scan started earlier may be dead. Unlike
     /// `startConnect`, this preserves the last reading on screen and only kicks a

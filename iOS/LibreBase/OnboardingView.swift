@@ -18,7 +18,11 @@ struct OnboardingView: View {
     @EnvironmentObject var health: Health
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @Environment(\.scenePhase) private var scenePhase
-    @State private var step = 0
+    @State private var step: Int
+
+    init(initialStep: Int = 0) {
+        _step = State(initialValue: initialStep)
+    }
 
     // Permission state — mirrored from the system so each row can show its status.
     @State private var bluetoothGranted = false

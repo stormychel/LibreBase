@@ -13,6 +13,12 @@ struct LibreBaseApp: App {
     @StateObject private var health = Health()
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
+    init() {
+        // Seed deterministic state before any view renders when capturing
+        // App Store screenshots; a no-op otherwise.
+        ScreenshotMode.configure()
+    }
+
     var body: some Scene {
         WindowGroup {
             if hasCompletedOnboarding {
@@ -20,7 +26,7 @@ struct LibreBaseApp: App {
                     .environmentObject(scale)
                     .environmentObject(health)
             } else {
-                OnboardingView()
+                OnboardingView(initialStep: ScreenshotMode.onboardingInitialStep)
                     .environmentObject(scale)
                     .environmentObject(health)
             }

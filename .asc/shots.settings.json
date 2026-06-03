@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "app": {
+    "bundle_id": "com.michelstorms.LibreBase",
+    "project": "iOS/LibreBase.xcodeproj",
+    "scheme": "LibreBase",
+    "simulator_name": "iPhone 17 Pro Max",
+    "os": "26.5"
+  },
+  "paths": {
+    "plan": ".asc/screenshots.json",
+    "raw_dir": "./screenshots/raw",
+    "framed_dir": "./screenshots/framed"
+  },
+  "pipeline": {
+    "frame_enabled": true,
+    "upload_enabled": false
+  },
+  "frame": {
+    "device": "iphone-17-pro-max"
+  },
+  "upload": {
+    "version_localization_id": "",
+    "device_type": "IPHONE_69",
+    "source_dir": "./screenshots/framed"
+  }
+}

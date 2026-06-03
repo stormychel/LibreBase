@@ -60,3 +60,7 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# Generated App Store screenshots (regenerate with Scripts/generate-screenshots.sh)
+screenshots/raw/
+screenshots/framed/

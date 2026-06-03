@@ -118,6 +118,13 @@ struct ContentView: View {
             if phase == .active { scale.resumeScanning() }
         }
         .task {
+            // Screenshot mode: show a demo weigh-in and skip the real Bluetooth /
+            // Health machinery (no prompts, no scanning) so captures are clean.
+            if ScreenshotMode.isActive {
+                if ScreenshotMode.showsReading { scale.loadDemoReading() }
+                return
+            }
+
             // Safety net: onboarding normally creates the Bluetooth central in its
             // permission step, but users upgrading past onboarding never saw it —
             // start it here too. Idempotent.
@@ -402,15 +409,27 @@ struct ContentView: View {
                 }
 
                 Section {
-                    Link(destination: URL(string: "https://github.com/stormychel/LibreBase")!) {
-                        Label("stormychel/LibreBase", systemImage: "link")
+                    Link(destination: Constants.supportMailURL) {
+                        Label("Support", systemImage: "envelope")
+                    }
+                    Link(destination: Constants.privacyURL) {
+                        Label("Privacy Policy", systemImage: "hand.raised")
+                    }
+                    Link(destination: Constants.githubURL) {
+                        Label("Source on GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
+                    }
+                    Link(destination: Constants.licenseURL) {
+                        Label("License (MIT)", systemImage: "doc.text")
                     }
                 } header: {
-                    Text("About")
+                    Text("Support & Legal")
                 } footer: {
-                    if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
-                        Text("LibreBase \(version) · open source, MIT licensed.")
+                    HStack {
+                        Spacer()
+                        Text(Constants.versionLabel + " · open source, MIT licensed.")
+                        Spacer()
                     }
+                    .padding(.top, 8)
                 }
             }
             .navigationTitle("Settings")
