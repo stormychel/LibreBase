@@ -15,6 +15,7 @@ enum ScreenshotScene: String {
     case howItWorks = "how_it_works"
     case privacy
     case reading
+    case readingImperial = "reading_imperial"
 }
 
 /// Deterministic state injection for App Store screenshots. The app is launched
@@ -44,7 +45,21 @@ enum ScreenshotMode {
     }
 
     /// True when the scene should show the completed app with a demo weigh-in.
-    static var showsReading: Bool { scene == .reading }
+    static var showsReading: Bool { scene == .reading || scene == .readingImperial }
+
+    /// Forces the unit system for unit-aware scenes so kg/lb is deterministic
+    /// regardless of the simulator's region (launch-arg locale doesn't reliably
+    /// move `Locale.measurementSystem`). nil = follow the device locale. Only the
+    /// display unit changes; BMI is computed from the canonical metric values and
+    /// is identical either way.
+    static var forcedUseMetric: Bool? {
+        guard isActive else { return nil }
+        switch scene {
+        case .reading:         return true
+        case .readingImperial: return false
+        default:               return nil
+        }
+    }
 
     static func configure() {
         guard isActive, let scene = scene else { return }
@@ -53,7 +68,7 @@ enum ScreenshotMode {
         case .welcome, .howItWorks, .privacy:
             // Onboarding scenes — start fresh.
             d.set(false, forKey: "hasCompletedOnboarding")
-        case .reading:
+        case .reading, .readingImperial:
             // Completed app with a saved height so BMI shows.
             d.set(true, forKey: "hasCompletedOnboarding")
             d.set(true, forKey: "autoSaveToHealth")

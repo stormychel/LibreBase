@@ -20,7 +20,10 @@ struct ContentView: View {
     @State private var pickerInches = 7
 
     /// Show height in feet/inches in imperial regions, centimeters otherwise.
-    private var useMetric: Bool { Locale.current.measurementSystem == .metric }
+    /// Screenshot mode can pin this so the kg/lb scenes render deterministically.
+    private var useMetric: Bool {
+        ScreenshotMode.forcedUseMetric ?? (Locale.current.measurementSystem == .metric)
+    }
 
     // Weight is always stored in kilograms; display it in the user's preferred
     // unit (pounds in imperial regions). Saving to Health is unaffected.

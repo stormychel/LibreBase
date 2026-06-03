@@ -5,11 +5,12 @@
     "udid": "booted",
     "output_dir": "./screenshots/raw"
   },
-  "_comment": "Reference manifest for the App Store scenes. Each scene relaunches the app with `-SCREENSHOT_MODE -SCREENSHOT_SCENE <scene>`, which builds the deterministic state in ScreenshotSupport.swift (onboarding step or a demo weigh-in). No taps are needed — every scene is reached directly from launch args. Scripts/generate-screenshots.sh is the authoritative orchestrator; keep this file in sync with it.",
+  "_comment": "Reference manifest for the App Store scenes. Each scene relaunches the app with `-SCREENSHOT_MODE -SCREENSHOT_SCENE <scene>`, which builds the deterministic state in ScreenshotSupport.swift (onboarding step or a demo weigh-in). The `reading` and `reading_imperial` scenes force metric (kg/cm) and imperial (lb/ft·in) display respectively, in-app, so units are deterministic regardless of the simulator's region. BMI is computed from the canonical metric values and is identical in both. No taps are needed. Scripts/generate-screenshots.sh is the authoritative orchestrator; keep this file in sync with it.",
   "scenes": [
-    { "name": "01_welcome",      "scene": "welcome",      "wait_ms": 3500, "title": "Your QardioBase, reunited with Apple Health" },
-    { "name": "02_how_it_works", "scene": "how_it_works", "wait_ms": 2500, "title": "Direct Bluetooth — no account, no cloud" },
-    { "name": "03_reading",      "scene": "reading",      "wait_ms": 3000, "title": "Step on. Your weight lands in Health." },
-    { "name": "04_privacy",      "scene": "privacy",      "wait_ms": 2500, "title": "Asks only for what it needs" }
+    { "name": "01_welcome",          "scene": "welcome",          "wait_ms": 3500, "title": "Your QardioBase, reunited with Apple Health" },
+    { "name": "02_how_it_works",     "scene": "how_it_works",     "wait_ms": 2500, "title": "Direct Bluetooth — no account, no cloud" },
+    { "name": "03_reading",          "scene": "reading",          "wait_ms": 3000, "title": "Step on. Your weight lands in Health (kg)." },
+    { "name": "04_reading_imperial", "scene": "reading_imperial", "wait_ms": 3000, "title": "Step on. Your weight lands in Health (lb)." },
+    { "name": "05_privacy",          "scene": "privacy",          "wait_ms": 2500, "title": "Asks only for what it needs" }
   ]
 }
