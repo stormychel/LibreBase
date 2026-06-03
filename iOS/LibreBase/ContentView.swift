@@ -405,7 +405,7 @@ struct ContentView: View {
                         Label("Source on GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
                     }
                     Link(destination: Constants.licenseURL) {
-                        Label("License (MIT)", systemImage: "doc.text")
+                        Label("Source code (MIT)", systemImage: "doc.text")
                     }
                     Link(destination: Constants.otherAppsURL) {
                         Label("My Other Apps", systemImage: "square.grid.2x2")
