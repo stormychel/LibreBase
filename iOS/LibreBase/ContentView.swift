@@ -15,8 +15,7 @@ struct ContentView: View {
     @AppStorage("heightCm") private var heightCm = 0.0
     @State private var showHeightSheet = false
     @State private var showSettings = false
-    @State private var showDeveloperTools = false   // Recon mode, revealed by tapping the version 5×
-    @State private var versionTapCount = 0
+    @State private var showReportScale = false
     @State private var pickerCmValue = 170   // wheel selection, metric (cm)
     @State private var pickerFeet = 5         // wheel selection, imperial
     @State private var pickerInches = 7
@@ -394,7 +393,9 @@ struct ContentView: View {
                     Link(destination: Constants.supportMailURL) {
                         Label("Support", systemImage: "envelope")
                     }
-                    Link(destination: Constants.scaleReportMailURL) {
+                    Button {
+                        showReportScale = true
+                    } label: {
                         Label("Report your scale", systemImage: "exclamationmark.bubble")
                     }
                     Link(destination: Constants.privacyURL) {
@@ -412,48 +413,13 @@ struct ContentView: View {
                 } header: {
                     Text("Support & Legal")
                 } footer: {
-                    Text("LibreBase is tested only with the original QardioBase (1st gen). Have a QardioBase 2 or X? Tap “Report your scale” — we'd love to help support it.")
-                        .frame(maxWidth: .infinity)
-                        .multilineTextAlignment(.center)
-                        .padding(.top, 8)
-                }
-
-                // Developer tools (Recon mode) are hidden by default and revealed
-                // by tapping the version footer five times — they're for capturing
-                // a new scale's BLE profile, not everyday use.
-                if showDeveloperTools {
-                    Section {
-                        Toggle("Recon mode (BLE capture)", isOn: $scale.reconMode)
-
-                        if scale.reconMode {
-                            ScrollView {
-                                Text(scale.reconLog.isEmpty
-                                     ? "Discovering services… step on the scale to capture payloads."
-                                     : scale.reconLog.joined(separator: "\n"))
-                                    .font(.system(.caption2, design: .monospaced))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
-                            }
-                            .frame(maxHeight: 220)
-                        }
-                    } header: {
-                        Text("Developer")
-                    } footer: {
-                        Text("Recon mode logs the scale's raw Bluetooth services and payloads — useful for adding support for new QardioBase hardware.")
-                    }
-                }
-
-                // Version footer — also the hidden gate for the Developer section.
-                Section {
-                    Button(action: revealDeveloperToolsIfTapped) {
+                    VStack(spacing: 10) {
+                        Text("LibreBase is tested only with the original QardioBase (1st gen). Have a QardioBase 2 or X? Tap “Report your scale” — we'd love to help support it.")
                         Text(Constants.versionLabel + " · open source, MIT licensed.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity)
-                            .multilineTextAlignment(.center)
                     }
-                    .buttonStyle(.plain)
-                    .listRowBackground(Color.clear)
+                    .frame(maxWidth: .infinity)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 8)
                 }
             }
             .navigationTitle("Settings")
@@ -463,17 +429,11 @@ struct ContentView: View {
                     Button("Done") { showSettings = false }
                 }
             }
+            .sheet(isPresented: $showReportScale) {
+                ReportScaleView().environmentObject(scale)
+            }
         }
         .presentationDetents([.large])
-    }
-
-    /// Tapping the version footer five times unlocks the Developer section.
-    private func revealDeveloperToolsIfTapped() {
-        guard !showDeveloperTools else { return }
-        versionTapCount += 1
-        if versionTapCount >= 5 {
-            withAnimation { showDeveloperTools = true }
-        }
     }
 
     // MARK: - Height picker
