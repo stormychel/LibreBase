@@ -10,6 +10,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var scale: ScaleClient
     @EnvironmentObject var health: Health
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("autoSaveToHealth") private var autoSaveToHealth = true
     @AppStorage("heightCm") private var heightCm = 0.0
     @State private var showHeightSheet = false
@@ -85,10 +86,11 @@ struct ContentView: View {
                     statusPills
                     heroCard
 
-                    // Retry button when disconnected. Placed above the settings on
-                    // purpose: its appearance/disappearance shifts the UI, drawing
-                    // attention to the fact that the scale needs to be reconnected.
-                    if !scale.isConnected {
+                    // When a previous reading is on screen but the scale has since
+                    // dropped (it powers down after each weigh-in), offer a manual
+                    // reconnect. The no-reading disconnected case is handled inside
+                    // the hero, so this only covers "result shown, link dropped".
+                    if !scale.isConnected && scale.lastReading != nil {
                         Button {
                             scale.startConnect()
                         } label: {
@@ -110,6 +112,11 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showHeightSheet) { heightPicker }
         .sheet(isPresented: $showSettings) { settingsSheet }
+        .onChange(of: scenePhase) { _, phase in
+            // iOS suspends BLE scans in the background; re-arm one on return so the
+            // scale reconnects on its own without the user tapping Reconnect.
+            if phase == .active { scale.resumeScanning() }
+        }
         .task {
             // Safety net: onboarding normally creates the Bluetooth central in its
             // permission step, but users upgrading past onboarding never saw it —
@@ -280,7 +287,9 @@ struct ContentView: View {
                         .font(.footnote)
                         .foregroundStyle(.white.opacity(0.8))
                 }
-            } else {
+            } else if scale.isConnected {
+                // Connected and idle: the scale is reachable, so inviting a
+                // step-on is honest.
                 Image(systemName: "figure.stand")
                     .font(.system(size: 52, weight: .light))
                     .foregroundStyle(.white)
@@ -291,6 +300,35 @@ struct ContentView: View {
                     .font(.subheadline)
                     .foregroundStyle(.white.opacity(0.85))
                     .multilineTextAlignment(.center)
+            } else {
+                // Not connected: don't pretend the scale is ready. The app keeps
+                // scanning on its own (see ScaleClient), so stepping on the scale
+                // usually reconnects without a tap — but make Reconnect the clear,
+                // prominent action in case it doesn't.
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .tint(.white)
+                    .scaleEffect(1.3)
+                    .padding(.bottom, 4)
+                Text("Connecting to your scale")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                Text(scale.status)
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.9))
+                    .multilineTextAlignment(.center)
+                Button {
+                    scale.startConnect()
+                } label: {
+                    Label("Reconnect", systemImage: "arrow.clockwise")
+                        .font(.headline)
+                        .foregroundStyle(Brand.teal)
+                        .padding(.horizontal, 28)
+                        .padding(.vertical, 13)
+                        .background(.white, in: Capsule())
+                        .shadow(color: Brand.deep.opacity(0.25), radius: 8, y: 4)
+                }
+                .padding(.top, 8)
             }
         }
         .frame(maxWidth: .infinity)
@@ -298,6 +336,7 @@ struct ContentView: View {
         .padding(.horizontal, 20)
         .background(Brand.gradient, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .shadow(color: Brand.deep.opacity(0.3), radius: 18, y: 10)
+        .animation(.easeInOut(duration: 0.3), value: scale.isConnected)
     }
 
     // MARK: - Settings card (on the main screen)

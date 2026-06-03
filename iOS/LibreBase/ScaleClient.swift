@@ -111,6 +111,17 @@ final class ScaleClient: NSObject, ObservableObject {
         }
     }
 
+    /// Resume scanning after the app returns to the foreground — iOS suspends BLE
+    /// scans while backgrounded, so a scan started earlier may be dead. Unlike
+    /// `startConnect`, this preserves the last reading on screen and only kicks a
+    /// scan when we aren't already connected, so reconnection is automatic without
+    /// the user tapping anything.
+    func resumeScanning() {
+        guard let central, central.state == .poweredOn, !isConnected else { return }
+        central.scanForPeripherals(withServices: nil, options: nil)
+        if lastReading == nil { status = "Searching… step on the scale to connect" }
+    }
+
     /// Begin scanning/connecting to the scale. Call on app start or on Retry.
     func startConnect(timeout: TimeInterval = 30) {
         guard let central, central.state == .poweredOn else {
@@ -145,16 +156,14 @@ final class ScaleClient: NSObject, ObservableObject {
 
         let work = DispatchWorkItem { [weak self] in
             guard let self = self, !self.isConnected else { return }
-            if self.peripheral == nil {
-                // Never even discovered the scale.
-                self.central?.stopScan()
-                self.status = "No scale found. Step on the scale to wake it, then retry."
-            } else {
-                // Discovered, but the connect hasn't completed — the scale likely
-                // went back to sleep. The pending connect stays queued and will
-                // complete on its own when it wakes on the next step-on.
-                self.status = "Step on the scale to wake it…"
-            }
+            // Deliberately do NOT stop scanning here. The QardioBase sleeps and
+            // only advertises when stepped on, so the smart thing is to keep the
+            // scan running indefinitely: the moment the user steps on, didDiscover
+            // fires and we connect — no manual Retry needed. We only nudge the
+            // status so the screen explains what to do.
+            self.status = self.peripheral == nil
+                ? "Searching… step on the scale to connect"
+                : "Step on the scale to wake it…"
         }
         connectTimeoutWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: work)
@@ -373,7 +382,10 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManager(_ central: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
         isConnected = false
         intentionalDisconnect = false
-        status = "Couldn't connect — step on the scale and tap Retry"
+        // Keep trying on our own: resume scanning so the next advertisement
+        // reconnects automatically rather than stranding the user on a manual tap.
+        status = "Reconnecting… step on the scale"
+        central.scanForPeripherals(withServices: nil, options: nil)
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
