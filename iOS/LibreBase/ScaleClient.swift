@@ -112,13 +112,18 @@ final class ScaleClient: NSObject, ObservableObject {
     }
 
     /// Populate a believable weigh-in for App Store screenshots (see
-    /// `ScreenshotMode`). Never called in normal use.
+    /// `ScreenshotMode`). Never called in normal use. The timestamp is a fixed
+    /// fixture so the `reading` scene renders identically across runs and machines.
     func loadDemoReading() {
         isConnected = true
         batteryLevelPct = 84
         batteryStatusLine = "Battery: 84%"
         status = "Weigh-in complete"
-        lastReading = ScaleReading(weightKg: 72.6, timestamp: Date())
+        var components = DateComponents()
+        components.year = 2026; components.month = 6; components.day = 1
+        components.hour = 9; components.minute = 41
+        let fixture = Calendar(identifier: .gregorian).date(from: components) ?? Date()
+        lastReading = ScaleReading(weightKg: 72.6, timestamp: fixture)
     }
 
     /// Resume scanning after the app returns to the foreground — iOS suspends BLE
