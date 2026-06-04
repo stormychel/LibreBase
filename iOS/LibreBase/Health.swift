@@ -63,4 +63,36 @@ final class Health: ObservableObject {
         let sample = HKQuantitySample(type: type, quantity: quantity, start: date, end: date)
         try await store.save(sample)
     }
+
+    // MARK: - Read-only (watchOS mirror)
+
+    /// Request read access to weight and height. Used by the watchOS companion,
+    /// which only displays the latest reading and never writes — kept separate
+    /// from `requestAuth` so the iOS write prompt is unchanged.
+    func requestReadAuth() async throws {
+        guard HKHealthStore.isHealthDataAvailable() else { return }
+        try await store.requestAuthorization(
+            toShare: [],
+            read: [HKQuantityType(.bodyMass), HKQuantityType(.height)]
+        )
+    }
+
+    /// Most recent body-mass sample in kilograms with its date, or nil if none is
+    /// stored / read access wasn't granted.
+    func latestWeight() async -> (kg: Double, date: Date)? {
+        guard HKHealthStore.isHealthDataAvailable() else { return nil }
+        let type = HKQuantityType(.bodyMass)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+        return await withCheckedContinuation { cont in
+            let query = HKSampleQuery(sampleType: type, predicate: nil,
+                                      limit: 1, sortDescriptors: [sort]) { _, samples, _ in
+                guard let sample = samples?.first as? HKQuantitySample else {
+                    cont.resume(returning: nil)
+                    return
+                }
+                cont.resume(returning: (sample.quantity.doubleValue(for: .gramUnit(with: .kilo)), sample.endDate))
+            }
+            self.store.execute(query)
+        }
+    }
 }
