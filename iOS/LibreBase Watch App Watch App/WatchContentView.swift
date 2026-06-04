@@ -11,7 +11,7 @@ import SwiftUI
 /// view appears, when the app returns to the foreground, and on pull-to-refresh —
 /// HealthKit doesn't push, and the iPhone writes the actual readings.
 struct WatchContentView: View {
-    @EnvironmentObject var health: Health
+    @EnvironmentObject var health: WatchHealth
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var weightKg: Double?
@@ -96,14 +96,14 @@ struct WatchContentView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 18)
         .padding(.horizontal, 12)
-        .background(Brand.gradient, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(WatchBrand.gradient, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "figure.stand")
                 .font(.system(size: 30, weight: .light))
-                .foregroundStyle(Brand.teal)
+                .foregroundStyle(WatchBrand.teal)
             Text("No weigh-in yet")
                 .font(.headline)
             Text("Step on your QardioBase with the LibreBase iPhone app — your latest weight shows up here.")

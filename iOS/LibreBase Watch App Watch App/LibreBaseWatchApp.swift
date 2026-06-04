@@ -13,7 +13,7 @@ import SwiftUI
 /// standalone-BLE research track.
 @main
 struct LibreBaseWatchApp: App {
-    @StateObject private var health = Health()
+    @StateObject private var health = WatchHealth()
 
     var body: some Scene {
         WindowGroup {
