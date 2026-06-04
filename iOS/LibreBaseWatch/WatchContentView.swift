@@ -116,10 +116,11 @@ struct WatchContentView: View {
 
     private func load() async {
         try? await health.requestReadAuth()
-        if let latest = await health.latestWeight() {
-            weightKg = latest.kg
-            weighedAt = latest.date
-        }
+        // Assign unconditionally so a deleted sample / revoked access clears the
+        // card instead of leaving a stale reading on screen.
+        let latest = await health.latestWeight()
+        weightKg = latest?.kg
+        weighedAt = latest?.date
         heightCm = await health.latestHeightCm()
         loaded = true
     }
