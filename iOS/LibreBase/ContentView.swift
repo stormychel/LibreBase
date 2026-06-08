@@ -20,6 +20,9 @@ struct ContentView: View {
     @State private var pickerFeet = 5         // wheel selection, imperial
     @State private var pickerInches = 7
 
+    @ScaledMetric(relativeTo: .largeTitle) private var weightFontSize: CGFloat = 72
+    @ScaledMetric(relativeTo: .title) private var unitFontSize: CGFloat = 28
+
     /// Show height in feet/inches in imperial regions, centimeters otherwise.
     /// Screenshot mode can pin this so the kg/lb scenes render deterministically.
     private var useMetric: Bool {
@@ -144,6 +147,7 @@ struct ContentView: View {
                     do {
                         try await health.saveWeight(kg: reading.weightKg, date: reading.timestamp)
                         scale.status = "Saved to Apple Health"
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
                     } catch {
                         scale.status = "Couldn't save to Health — check Settings ▸ Privacy ▸ Health"
                     }
@@ -264,12 +268,14 @@ struct ContentView: View {
             if scale.lastReading != nil {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(weightValue)
-                        .font(.system(size: 72, weight: .bold, design: .rounded))
+                        .font(.system(size: weightFontSize, weight: .bold, design: .rounded))
                         .contentTransition(.numericText())
                     Text(weightUnit)
-                        .font(.system(size: 28, weight: .semibold, design: .rounded))
+                        .font(.system(size: unitFontSize, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.85))
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(weightValue) \(weightUnit)")
                 .foregroundStyle(.white)
 
                 if let bmi {
@@ -346,6 +352,16 @@ struct ContentView: View {
                         .shadow(color: Brand.deep.opacity(0.25), radius: 8, y: 4)
                 }
                 .padding(.top, 8)
+                
+                Button {
+                    showReportScale = true
+                } label: {
+                    Text("Having trouble connecting?")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .underline()
+                }
+                .padding(.top, 16)
             }
         }
         .frame(maxWidth: .infinity)
