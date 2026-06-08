@@ -226,6 +226,7 @@ final class ScaleClient: NSObject, ObservableObject {
             return
         }
         sessionActive = false
+        didFinalizeSession = true
         status = "Weigh-in complete"
         onFinalReading?(reading)
     }
@@ -250,6 +251,7 @@ final class ScaleClient: NSObject, ObservableObject {
         // (discontinued) Qardio app. We ignore it and compute BMI in-app instead.
         let reading = ScaleReading(weightKg: weightKg, timestamp: Date())
         DispatchQueue.main.async {
+            guard !self.didFinalizeSession else { return }
             self.lastReading = reading
             self.sessionActive = true
             self.status = "Measuring…"
