@@ -520,6 +520,7 @@
 				CODE_SIGN_ENTITLEMENTS = "LibreBase Watch App Watch App/LibreBaseWatch.entitlements";
 				INFOPLIST_KEY_CFBundleDisplayName = "LibreBase Watch App";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "LibreBase shows your most recent weight and BMI from Apple Health.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "LibreBase keeps your weight in sync with Apple Health.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.michelstorms.LibreBase;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -555,6 +556,7 @@
 				CODE_SIGN_ENTITLEMENTS = "LibreBase Watch App Watch App/LibreBaseWatch.entitlements";
 				INFOPLIST_KEY_CFBundleDisplayName = "LibreBase Watch App";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "LibreBase shows your most recent weight and BMI from Apple Health.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "LibreBase keeps your weight in sync with Apple Health.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.michelstorms.LibreBase;
 				LD_RUNPATH_SEARCH_PATHS = (
