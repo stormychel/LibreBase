@@ -5,6 +5,7 @@
 //  Created by Michel Storms on 02/06/2026.
 //
 
+import HealthKit
 import SwiftUI
 
 struct ContentView: View {
@@ -16,6 +17,7 @@ struct ContentView: View {
     @State private var showHeightSheet = false
     @State private var showSettings = false
     @State private var showReportScale = false
+    @State private var showHealthDeniedAlert = false
     @State private var pickerCmValue = 170   // wheel selection, metric (cm)
     @State private var pickerFeet = 5         // wheel selection, imperial
     @State private var pickerInches = 7
@@ -123,6 +125,32 @@ struct ContentView: View {
             // iOS suspends BLE scans in the background; re-arm one on return so the
             // scale reconnects on its own without the user tapping Reconnect.
             if phase == .active { scale.resumeScanning() }
+        }
+        .onChange(of: autoSaveToHealth) { _, isOn in
+            // Flipping the in-app toggle on does nothing unless iOS will accept the
+            // writes. HealthKit's permission sheet appears only once, ever, so if it
+            // was dismissed earlier the toggle would silently fail. Close the gap by
+            // presenting the sheet (never asked) or steering to Settings (denied).
+            // See issue #37.
+            guard isOn, !ScreenshotMode.isActive else { return }
+            switch health.bodyMassWriteStatus {
+            case .notDetermined:
+                Task { try? await health.requestAuth() }
+            case .sharingDenied:
+                showHealthDeniedAlert = true
+            default:
+                break
+            }
+        }
+        .alert("Allow Health Access", isPresented: $showHealthDeniedAlert) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            Button("Not Now", role: .cancel) {}
+        } message: {
+            Text("LibreBase can't save weights until you turn on Weight in Settings ▸ Privacy ▸ Health ▸ LibreBase.")
         }
         .task {
             // Screenshot mode: show a demo weigh-in and skip the real Bluetooth /
