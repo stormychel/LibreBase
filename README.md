@@ -21,7 +21,7 @@ When Qardio Inc. shut down in 2025 — app delisted, servers dark — the scales
 
 ## TestFlight
 
-While I work with Apple on having this allowed to be on the iOS App Store, I will [provide this TestFlight link](https://testflight.apple.com/join/HDt1gpjR) - please provide your feedback while testing, your input will be of tremendous help!
+While I work with Apple on having this allowed to be on the iOS App Store, I will [provide this TestFlight link](https://testflight.apple.com/join/HDt1gpjR) - please share your feedback while testing, your input will be of tremendous help!
 
 Important note: this app will always remain free and an Android version may be coming if there's enough interest.
 
