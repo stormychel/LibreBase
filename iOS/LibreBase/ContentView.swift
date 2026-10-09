@@ -208,6 +208,9 @@ struct ContentView: View {
             scale.onFinalReading = { reading in
                 // A shared scale reports every household member's weigh-in; only
                 // save the ones attributed to this phone's owner. See issue #42.
+                // Whatever happens to this weigh-in, an older pending one no
+                // longer matches the reading on screen.
+                unsavedReading = nil
                 let decision = ScaleUserBinding.decide(for: reading.scaleUser)
                 knownScaleUsers = ScaleUserBinding.knownUsers()
                 if case .skip(let user) = decision {
@@ -219,7 +222,6 @@ struct ContentView: View {
                     scale.status = "Weigh-in complete — not saved to Health"
                     return
                 }
-                unsavedReading = nil
                 saveToHealth(reading)
             }
 
@@ -250,6 +252,8 @@ struct ContentView: View {
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
             } catch {
                 scale.status = "Couldn't save to Health — check Settings ▸ Privacy ▸ Health"
+                // Keep it saveable by hand unless a newer weigh-in took its place.
+                if scale.lastReading?.timestamp == reading.timestamp { unsavedReading = reading }
             }
         }
     }
