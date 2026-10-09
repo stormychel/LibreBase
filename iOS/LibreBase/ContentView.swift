@@ -22,6 +22,9 @@ struct ContentView: View {
     @State private var showSettings = false
     @State private var showReportScale = false
     @State private var showHealthDeniedAlert = false
+    /// A finished weigh-in that auto-save (being off) didn't write to Health; the
+    /// user can still save it by hand until the next weigh-in replaces it.
+    @State private var unsavedReading: ScaleReading?
     @State private var pickerCmValue = 170   // wheel selection, metric (cm)
     @State private var pickerFeet = 5         // wheel selection, imperial
     @State private var pickerInches = 7
@@ -129,6 +132,22 @@ struct ContentView: View {
                         }
                     }
 
+                    // Auto-save is off: offer to save this one weigh-in by hand
+                    // instead of silently discarding it.
+                    if let reading = unsavedReading, scale.lastReading != nil {
+                        Button {
+                            unsavedReading = nil
+                            saveToHealth(reading)
+                        } label: {
+                            Label("Save to Apple Health", systemImage: "heart.fill")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                                .background(Brand.gradient, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .foregroundStyle(.white)
+                        }
+                    }
+
                     settingsCard
                 }
                 .padding(.horizontal, 20)
@@ -195,20 +214,13 @@ struct ContentView: View {
                     scale.status = "Weigh-in for “\(user.name)” — not saved to Health"
                     return
                 }
-                guard autoSaveToHealth else { return }
-                Task { @MainActor in
-                    do {
-                        try await health.saveWeight(kg: reading.weightKg, date: reading.timestamp)
-                        if let composition = reading.composition {
-                            await health.saveComposition(composition, weightKg: reading.weightKg,
-                                                         date: reading.timestamp)
-                        }
-                        scale.status = "Saved to Apple Health"
-                        UINotificationFeedbackGenerator().notificationOccurred(.success)
-                    } catch {
-                        scale.status = "Couldn't save to Health — check Settings ▸ Privacy ▸ Health"
-                    }
+                guard autoSaveToHealth else {
+                    unsavedReading = reading
+                    scale.status = "Weigh-in complete — not saved to Health"
+                    return
                 }
+                unsavedReading = nil
+                saveToHealth(reading)
             }
 
             do {
@@ -222,6 +234,22 @@ struct ContentView: View {
             // always wins — we never overwrite it.
             if heightCm == 0, let h = await health.latestHeightCm() {
                 heightCm = h
+            }
+        }
+    }
+
+    private func saveToHealth(_ reading: ScaleReading) {
+        Task { @MainActor in
+            do {
+                try await health.saveWeight(kg: reading.weightKg, date: reading.timestamp)
+                if let composition = reading.composition {
+                    await health.saveComposition(composition, weightKg: reading.weightKg,
+                                                 date: reading.timestamp)
+                }
+                scale.status = "Saved to Apple Health"
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } catch {
+                scale.status = "Couldn't save to Health — check Settings ▸ Privacy ▸ Health"
             }
         }
     }
@@ -440,7 +468,7 @@ struct ContentView: View {
 
     private var settingsCard: some View {
         VStack(spacing: 0) {
-            Toggle("Save to Apple Health", isOn: $autoSaveToHealth)
+            Toggle("Auto-save to Apple Health", isOn: $autoSaveToHealth)
                 .padding(.vertical, 14)
                 .padding(.horizontal, 16)
 
