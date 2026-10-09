@@ -15,7 +15,7 @@ When Qardio Inc. shut down in 2025 — app delisted, servers dark — the scales
 
 </div>
 
-> **Compatibility:** works with the **original QardioBase (1st generation, model B100)** and the **QardioBase 2 (B200)**. The **QardioBase X** speaks a different profile and does **not** work yet. **Have another Qardio Base?** Please try LibreBase and tell us how it went — email **librebaseapp@michelstorms.dev** or send a capture log (see [Contributing](#contributing)). Your reports help us support more scales.
+> **Compatibility:** works with the **original QardioBase (1st generation, model B100)** and the **QardioBase 2 (B200)**. **QardioBase X** support is experimental and unconfirmed. **Have another Qardio Base?** Please try LibreBase and tell us how it went — email **librebaseapp@michelstorms.dev** or send a capture log (see [Contributing](#contributing)). Your reports help us support more scales.
 
 ---
 
@@ -40,7 +40,7 @@ Important note: this app will always remain free and an Android version may be c
 ## Requirements
 
 - iPhone running iOS 26.5 or later.
-- A **QardioBase (1st generation, B100)** or **QardioBase 2 (B200)** smart scale. The QardioBase X is not supported yet; see [Supported hardware](#supported-hardware).
+- A **QardioBase (1st generation, B100)** or **QardioBase 2 (B200)** smart scale. QardioBase X support is experimental; see [Supported hardware](#supported-hardware).
 - To build and run on a device: Xcode 26+ and an Apple Developer account (HealthKit requires a provisioned device, not the simulator, for real data).
 
 ## Build & run
@@ -99,7 +99,7 @@ LibreBase has no servers, no analytics, and no network code. Everything happens 
 |-------|--------|
 | QardioBase (1st gen, B100) | ✅ Tested — weight → Health works |
 | QardioBase 2 (B200) | ✅ Verified by a tester — same profile as the B100 |
-| QardioBase X (BX00) | ❌ Not working yet — standard SIG profile, no weight received (#41) |
+| QardioBase X (BX00) | 🧪 Experimental — standard SIG profile with a User Data consent step; implemented from captures, not yet confirmed on a real scale (#41) |
 
 Body composition comes from the scale's own result JSON: **body fat %** and the **lean body mass** derived from it are saved to Apple Health; water, muscle and bone are shown in the app only (HealthKit has no types for them). It is skipped when the scale reports an implausible impedance — weigh in barefoot.
 
@@ -141,6 +141,20 @@ The tested unit does **not** expose the standard Weight Scale (`0x181D`) or Body
 | `9F3F4E1B-37D7-4F95-B374-CF585D808BEB` | noisy engineering/debug stream; also accepts config write `00 00 01 01` |
 | `B24F98BE-9CD4-4F82-B935-01F18F104EDE` | final measurement JSON; read after state `06` |
 | `1EC92A15-14E0-43E7-A990-CB37000990BA` | calibration JSON |
+
+### QardioBase X GATT profile
+
+The X (`Model Number String` = `BX00`) exposes none of the B100 vendor service. It speaks the standard Bluetooth SIG stack instead:
+
+| Service | Characteristics |
+|---------|-----------------|
+| Weight Scale `181D` | `2A9D` measurement [notify,indicate], `2A9E` feature (`27 00 00 00`: timestamp, multiple users, BMI) |
+| Body Composition `181B` | `2A9C` measurement [notify,indicate], `2A9B` feature |
+| User Data `181C` | `2A8C` gender, `2A80` age, `2A85` date of birth, `2A8E` height, Database Change Increment, **User Control Point** `2A9F`, `2AFF` |
+| Current Time `1805` | `2A2B` [read,write,notify] — reads 1970 on a scale the Qardio app never set |
+| Vendor | `FFE1`/`FFE2`, `FFF1`/`FFF2`, service `8018` (`8020`–`8023`) — all-zero reads, purpose unknown |
+
+Two captures show the scale connecting and then staying silent, with every User Data field reading `ff` (no user selected). LibreBase therefore writes the current time, then runs the User Data consent flow on the User Control Point — **Register New User** (`01` + a consent code; the scale answers `20 01 01 <index>`) once per scale, then **Consent** (`02 <index> <code>`) on every connection — before expecting `2A9D`/`2A9C` indications. This is implemented from the spec and the captures; whether the X accepts it is unverified. If you have an X, a "Report your scale" capture from a build with this flow shows the control-point responses.
 
 ### Final measurement JSON
 
