@@ -97,6 +97,16 @@ enum StandardScaleProfile {
         return merged.isEmpty ? nil : merged
     }
 
+    /// User Data index a Body Composition frame is attributed to, if it says.
+    static func bodyCompositionUserIndex(_ data: Data) -> UInt8? {
+        let b = [UInt8](data)
+        guard b.count >= 4 else { return nil }
+        let flags = u16(b, 0)
+        guard flags & 0x0004 != 0 else { return nil }
+        let offset = 4 + (flags & 0x0002 != 0 ? 7 : 0)
+        return b.count > offset ? b[offset] : nil
+    }
+
     // MARK: - Current Time (0x2A2B)
 
     /// year(2) month day hour minute second weekday(1 = Monday) fractions256 adjust-reason

@@ -73,15 +73,17 @@ final class ScaleClient: NSObject, ObservableObject {
     /// Body Composition arrives as its own indication(s), before or after the
     /// weight. The raw frames are kept — water is sent as a mass and can only
     /// become a percentage once the weight is known.
-    private var compositionFrames: [Data] = []
+    private var compositionFrames: [(data: Data, receivedAt: Date)] = []
+    /// Frames already saved with a weigh-in, so a retransmission isn't taken
+    /// for part of the next one.
+    private var consumedCompositionFrames: Set<Data> = []
     /// One consent attempt per connection, plus at most one re-registration.
     private var consentStarted = false
     private var didReregisterUser = false
     private var consentTimeoutWorkItem: DispatchWorkItem?
-    /// The last standard-profile frame that was finalized, and when — lets a
-    /// second weigh-in on the same connection through while ignoring repeats.
+    /// The last standard-profile weight frame that was finalized — lets a second
+    /// weigh-in on the same connection through while ignoring retransmissions.
     private var finalizedWeightFrame: Data?
-    private var finalizedAt: Date?
     /// Services still waiting on characteristic discovery, so "no supported
     /// weight service" is decided once at the end instead of per service.
     private var servicesAwaitingCharacteristics = 0
@@ -260,7 +262,7 @@ final class ScaleClient: NSObject, ObservableObject {
         }
         sessionActive = false
         didFinalizeSession = true
-        finalizedAt = Date()
+        consumedCompositionFrames.formUnion(compositionFrames.map(\.data))
         compositionFrames.removeAll()
         status = "Weigh-in complete"
         onFinalReading?(reading)
@@ -273,18 +275,18 @@ final class ScaleClient: NSObject, ObservableObject {
 
         // On a shared scale, a weigh-in attributed to a user other than the one
         // this phone registered must not land in this phone's Health record.
-        if let index = weight.userIndex, let mine = storedScaleUser(for: p)?.index, index != mine {
+        if isForAnotherScaleUser(weight.userIndex, on: p) {
+            compositionFrames.removeAll()
             status = "Weigh-in for another scale user — not saved"
             return
         }
 
-        // The scale stays connected between weigh-ins: after a quiet spell a
-        // frame that differs from the one already saved is a new weigh-in.
-        if didFinalizeSession, let finalizedAt, Date().timeIntervalSince(finalizedAt) > 10,
-           data != finalizedWeightFrame {
-            didFinalizeSession = false
-            compositionFrames.removeAll()
-        }
+        // The scale stays connected between weigh-ins. Finalizing needs a quiet
+        // spell, so a frame that differs from the one already saved is a new
+        // weigh-in; an identical one is a retransmission. (A second weigh-in
+        // with byte-identical weight and no timestamp is indistinguishable from
+        // a retransmission and is not recorded.)
+        if didFinalizeSession, data != finalizedWeightFrame { didFinalizeSession = false }
         guard !didFinalizeSession else { return }
 
         // Note: the standard payload may carry a BMI field (flag 0x08), but it is
@@ -296,22 +298,35 @@ final class ScaleClient: NSObject, ObservableObject {
             (now.addingTimeInterval(-7 * 86_400)...now.addingTimeInterval(300)).contains($0) ? $0 : nil
         } ?? now
         finalizedWeightFrame = data
-        lastReading = ScaleReading(
-            weightKg: weight.kg, timestamp: timestamp,
-            composition: StandardScaleProfile.parseBodyComposition(frames: compositionFrames, weightKg: weight.kg))
+        lastReading = ScaleReading(weightKg: weight.kg, timestamp: timestamp,
+                                   composition: currentComposition(weightKg: weight.kg))
         sessionActive = true
         status = "Measuring…"
         scheduleFinalize()
     }
 
-    private func parseBodyComposition(_ data: Data) {
-        guard !didFinalizeSession else { return }
-        compositionFrames.append(data)
+    private func parseBodyComposition(_ data: Data, from p: CBPeripheral) {
+        guard !isForAnotherScaleUser(StandardScaleProfile.bodyCompositionUserIndex(data), on: p),
+              !consumedCompositionFrames.contains(data) else { return }
+        compositionFrames.append((data, Date()))
         if sessionActive, let weightKg = lastReading?.weightKg {
-            lastReading?.composition =
-                StandardScaleProfile.parseBodyComposition(frames: compositionFrames, weightKg: weightKg)
+            lastReading?.composition = currentComposition(weightKg: weightKg)
             scheduleFinalize()
         }
+    }
+
+    /// Composition from the frames that belong to the weigh-in in progress: only
+    /// recent ones, so a frame left over from an abandoned measurement can't
+    /// attach itself to a later weight.
+    private func currentComposition(weightKg: Double) -> BodyComposition? {
+        let cutoff = Date().addingTimeInterval(-10)
+        compositionFrames.removeAll { $0.receivedAt < cutoff }
+        return StandardScaleProfile.parseBodyComposition(frames: compositionFrames.map(\.data), weightKg: weightKg)
+    }
+
+    private func isForAnotherScaleUser(_ index: UInt8?, on p: CBPeripheral) -> Bool {
+        guard let index, let mine = storedScaleUser(for: p)?.index else { return false }
+        return index != mine
     }
 
     // MARK: - User Data Service consent (QardioBase X)
@@ -504,6 +519,8 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         qardioMeasurementActive = false
         status = "Connected — discovering…"
         compositionFrames.removeAll()
+        consumedCompositionFrames.removeAll()
+        finalizedWeightFrame = nil
         consentStarted = false
         didReregisterUser = false
         // Recon: discover everything. Otherwise just the services we need.
@@ -658,7 +675,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         case weightMeasurement:
             parseWeight(data, from: p)
         case bodyCompMeasurement:
-            parseBodyComposition(data)
+            parseBodyComposition(data, from: p)
         case userControlPoint:
             handleUserControlPoint(data, from: p)
         case qbResult:

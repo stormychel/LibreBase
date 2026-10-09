@@ -115,6 +115,12 @@ struct LibreBaseTests {
                 == BodyComposition(fatPct: 22))
         #expect(StandardScaleProfile.parseBodyComposition(frames: [fat, water], weightKg: 71.4)
                 == BodyComposition(fatPct: 22, waterPct: 50))
+
+        // User index: directly after the fat field, or after a timestamp.
+        #expect(StandardScaleProfile.bodyCompositionUserIndex(fat) == nil)
+        #expect(StandardScaleProfile.bodyCompositionUserIndex(Data([0x04, 0x00, 0xDC, 0x00, 0x03])) == 3)
+        #expect(StandardScaleProfile.bodyCompositionUserIndex(
+            Data([0x06, 0x00, 0xDC, 0x00, 0xEA, 0x07, 10, 9, 7, 30, 15, 0x03])) == 3)
     }
 
     @Test func encodesCurrentTime() {
