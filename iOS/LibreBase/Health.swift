@@ -10,6 +10,8 @@ import HealthKit
 
 /// Thin wrapper over HealthKit for saving weight measurements.
 final class Health: ObservableObject {
+    static let shared = Health()
+
     let store = HKHealthStore()
 
     /// Request permission to write body mass, body composition and height, and

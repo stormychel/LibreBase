@@ -16,15 +16,11 @@ struct ContentView: View {
     @AppStorage("heightCm") private var heightCm = 0.0
     @AppStorage(ScaleUserBinding.boundIDKey) private var scaleUserID = ""
     @AppStorage(ScaleUserBinding.saveAnyUserKey) private var saveAnyScaleUser = false
-    /// Mirrors `ScaleUserBinding.knownUsers()`; refreshed after each weigh-in.
-    @State private var knownScaleUsers: [String: String] = ScaleUserBinding.knownUsers()
+    @ObservedObject private var recorder = WeighInRecorder.shared
     @State private var showHeightSheet = false
     @State private var showSettings = false
     @State private var showReportScale = false
     @State private var showHealthDeniedAlert = false
-    /// A finished weigh-in that auto-save (being off) didn't write to Health; the
-    /// user can still save it by hand until the next weigh-in replaces it.
-    @State private var unsavedReading: ScaleReading?
     @State private var pickerCmValue = 170   // wheel selection, metric (cm)
     @State private var pickerFeet = 5         // wheel selection, imperial
     @State private var pickerInches = 7
@@ -77,7 +73,7 @@ struct ContentView: View {
 
     private var scaleUserLabel: String {
         if saveAnyScaleUser { return "Everyone" }
-        return knownScaleUsers[scaleUserID] ?? "Not set"
+        return recorder.knownScaleUsers[scaleUserID] ?? "Not set"
     }
 
     /// Current height rendered in the user's preferred unit, or a prompt if unset.
@@ -134,10 +130,10 @@ struct ContentView: View {
 
                     // Auto-save is off: offer to save this one weigh-in by hand
                     // instead of silently discarding it.
-                    if let reading = unsavedReading, scale.lastReading != nil {
+                    if let reading = recorder.unsavedReading, scale.lastReading != nil {
                         Button {
-                            unsavedReading = nil
-                            saveToHealth(reading)
+                            recorder.unsavedReading = nil
+                            recorder.save(reading)
                         } label: {
                             Label("Save to Apple Health", systemImage: "heart.fill")
                                 .font(.headline)
@@ -161,6 +157,9 @@ struct ContentView: View {
             // iOS suspends BLE scans in the background; re-arm one on return so the
             // scale reconnects on its own without the user tapping Reconnect.
             if phase == .active { scale.resumeScanning() }
+            // Leave a connection request pending so the next step-on wakes the
+            // app and records the weigh-in without it being opened. See #19.
+            if phase == .background { scale.armPendingConnect() }
         }
         .onChange(of: autoSaveToHealth) { _, isOn in
             // Flipping the in-app toggle on does nothing unless iOS will accept the
@@ -201,28 +200,6 @@ struct ContentView: View {
             // start it here too. Idempotent.
             scale.start()
 
-            // Register the save callback before awaiting authorization: the
-            // permission prompt suspends this task, and a weigh-in could
-            // finalize while it's up. Installing it first avoids dropping
-            // that first reading.
-            scale.onFinalReading = { reading in
-                // A shared scale reports every household member's weigh-in; only
-                // save the ones attributed to this phone's owner. See issue #42.
-                let decision = ScaleUserBinding.decide(for: reading.scaleUser)
-                knownScaleUsers = ScaleUserBinding.knownUsers()
-                if case .skip(let user) = decision {
-                    scale.status = "Weigh-in for “\(user.name)” — not saved to Health"
-                    return
-                }
-                guard autoSaveToHealth else {
-                    unsavedReading = reading
-                    scale.status = "Weigh-in complete — not saved to Health"
-                    return
-                }
-                unsavedReading = nil
-                saveToHealth(reading)
-            }
-
             do {
                 try await health.requestAuth()
             } catch {
@@ -234,22 +211,6 @@ struct ContentView: View {
             // always wins — we never overwrite it.
             if heightCm == 0, let h = await health.latestHeightCm() {
                 heightCm = h
-            }
-        }
-    }
-
-    private func saveToHealth(_ reading: ScaleReading) {
-        Task { @MainActor in
-            do {
-                try await health.saveWeight(kg: reading.weightKg, date: reading.timestamp)
-                if let composition = reading.composition {
-                    await health.saveComposition(composition, weightKg: reading.weightKg,
-                                                 date: reading.timestamp)
-                }
-                scale.status = "Saved to Apple Health"
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-            } catch {
-                scale.status = "Couldn't save to Health — check Settings ▸ Privacy ▸ Health"
             }
         }
     }
@@ -497,11 +458,11 @@ struct ContentView: View {
 
             // Only scales that tag weigh-ins with a user (QardioBase 2) get this
             // row — it appears after the first such weigh-in.
-            if !knownScaleUsers.isEmpty {
+            if !recorder.knownScaleUsers.isEmpty {
                 Divider().padding(.leading, 16)
 
                 Menu {
-                    ForEach(knownScaleUsers.sorted { $0.value < $1.value }, id: \.key) { id, name in
+                    ForEach(recorder.knownScaleUsers.sorted { $0.value < $1.value }, id: \.key) { id, name in
                         Button {
                             scaleUserID = id
                             saveAnyScaleUser = false
