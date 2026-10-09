@@ -204,6 +204,8 @@ final class ScaleClient: NSObject, ObservableObject {
         // attempts to the same peripheral when the user taps Retry. Mark it
         // intentional so didDisconnectPeripheral doesn't immediately re-queue it.
         let hadPeripheral = peripheral != nil
+        // This attempt owns the connection now; drop any deferred re-arm.
+        rearmAfterTeardown = false
         if let peripheral {
             intentionalDisconnect = true
             central.cancelPeripheralConnection(peripheral)
@@ -442,6 +444,10 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         let advertisesQardioBase =
             (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID])?.contains(qbService) ?? false
 
+        // One scale at a time: a pending connect can complete while a scan is
+        // still running, and a second scale in range must not displace it.
+        guard !isConnected else { return }
+
         // Accept by name hint or by advertised standard service.
         guard advName.localizedCaseInsensitiveContains(nameHint) || advertisesWeightScale || advertisesQardioBase else {
             return
@@ -460,6 +466,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManager(_ central: CBCentralManager, didConnect p: CBPeripheral) {
         isConnected = true
         connectTimeoutWorkItem?.cancel()
+        central.stopScan()
         UserDefaults.standard.set(p.identifier.uuidString, forKey: knownScaleKey)
         // Fresh connection → clean session state so the next step-on records.
         intentionalDisconnect = false
