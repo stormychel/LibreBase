@@ -85,6 +85,15 @@ struct LibreBaseTests {
         let weight = try #require(StandardScaleProfile.parseWeight(frame, calendar: utc))
         let c = utc.dateComponents([.year, .month, .day, .hour, .minute, .second], from: try #require(weight.timestamp))
         #expect([c.year, c.month, c.day, c.hour, c.minute, c.second] == [2026, 10, 9, 7, 30, 15])
+        #expect(weight.userIndex == nil)
+
+        // Timestamp and user index (flags 0x06): the index follows the 7 time bytes.
+        let attributed = Data([0x06, 0xC8, 0x37, 0xEA, 0x07, 10, 9, 7, 30, 15, 0x02])
+        #expect(StandardScaleProfile.parseWeight(attributed, calendar: utc)?.userIndex == 2)
+        // User index only (flags 0x04).
+        #expect(StandardScaleProfile.parseWeight(Data([0x04, 0xC8, 0x37, 0xFF]))?.userIndex == 0xFF)
+        // Flag promises a timestamp the frame doesn't carry.
+        #expect(StandardScaleProfile.parseWeight(Data([0x02, 0xC8, 0x37, 0xEA])) == nil)
     }
 
     @Test func parsesBodyCompositionMeasurement() {
@@ -97,6 +106,15 @@ struct LibreBaseTests {
         #expect(StandardScaleProfile.parseBodyComposition(Data([0x00, 0x00, 0xFF, 0xFF])) == nil)
         // Flag promises a field the frame doesn't carry.
         #expect(StandardScaleProfile.parseBodyComposition(Data([0x10, 0x00, 0xDC, 0x00])) == nil)
+
+        // Split over two frames, water mass without an embedded weight: it
+        // becomes a percentage once the weight is supplied.
+        let fat = Data([0x00, 0x00, 0xDC, 0x00])
+        let water = Data([0x00, 0x01, 0xFF, 0xFF, 0xE4, 0x1B])
+        #expect(StandardScaleProfile.parseBodyComposition(frames: [fat, water], weightKg: nil)
+                == BodyComposition(fatPct: 22))
+        #expect(StandardScaleProfile.parseBodyComposition(frames: [fat, water], weightKg: 71.4)
+                == BodyComposition(fatPct: 22, waterPct: 50))
     }
 
     @Test func encodesCurrentTime() {

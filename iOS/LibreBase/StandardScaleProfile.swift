@@ -15,21 +15,38 @@ enum StandardScaleProfile {
         let kg: Double
         /// The scale's own clock, when the frame carries it.
         let timestamp: Date?
+        /// User Data index the scale attributed the weigh-in to (0xFF = unknown).
+        let userIndex: UInt8?
+    }
+
+    /// GATT dates are Gregorian whatever calendar the phone is set to.
+    static var gregorian: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        return calendar
     }
 
     // MARK: - Weight Measurement (0x2A9D)
 
     /// flags(1) weight(2) [timestamp(7)] [user(1)] [bmi(2) height(2)]
-    static func parseWeight(_ data: Data, calendar: Calendar = .current) -> Weight? {
+    static func parseWeight(_ data: Data, calendar: Calendar = gregorian) -> Weight? {
         let b = [UInt8](data)
         guard b.count >= 3 else { return nil }
         let flags = b[0]
         let kg = mass(raw: u16(b, 1), imperial: flags & 0x01 != 0)
+        var offset = 3
         var timestamp: Date?
-        if flags & 0x02 != 0, b.count >= 10 {
-            timestamp = date(Array(b[3..<10]), calendar: calendar)
+        if flags & 0x02 != 0 {
+            guard b.count >= offset + 7 else { return nil }
+            timestamp = date(Array(b[offset..<offset + 7]), calendar: calendar)
+            offset += 7
         }
-        return Weight(kg: kg, timestamp: timestamp)
+        var userIndex: UInt8?
+        if flags & 0x04 != 0 {
+            guard b.count >= offset + 1 else { return nil }
+            userIndex = b[offset]
+        }
+        return Weight(kg: kg, timestamp: timestamp, userIndex: userIndex)
     }
 
     // MARK: - Body Composition Measurement (0x2A9C)
@@ -66,10 +83,24 @@ enum StandardScaleProfile {
         return composition.isEmpty ? nil : composition
     }
 
+    /// A measurement may be split over several indications (multiple-packet
+    /// flag); later frames fill in what earlier ones lacked.
+    static func parseBodyComposition(frames: [Data], weightKg: Double?) -> BodyComposition? {
+        var merged = BodyComposition()
+        for frame in frames {
+            guard let part = parseBodyComposition(frame, weightKg: weightKg) else { continue }
+            merged.fatPct = part.fatPct ?? merged.fatPct
+            merged.waterPct = part.waterPct ?? merged.waterPct
+            merged.musclePct = part.musclePct ?? merged.musclePct
+            merged.bonePct = part.bonePct ?? merged.bonePct
+        }
+        return merged.isEmpty ? nil : merged
+    }
+
     // MARK: - Current Time (0x2A2B)
 
     /// year(2) month day hour minute second weekday(1 = Monday) fractions256 adjust-reason
-    static func currentTime(_ date: Date, calendar: Calendar = .current) -> Data {
+    static func currentTime(_ date: Date, calendar: Calendar = gregorian) -> Data {
         let c = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second, .weekday], from: date)
         let year = UInt16(c.year ?? 2000)
         // Calendar: 1 = Sunday … 7 = Saturday. Bluetooth: 1 = Monday … 7 = Sunday.
