@@ -116,6 +116,9 @@ final class ScaleClient: NSObject, ObservableObject {
     /// True between `willRestoreState` and the first `.poweredOn`: the restored
     /// peripheral must be picked up as-is, not torn down by `startConnect`.
     private var restoredFromBackground = false
+    /// Set when a pending connect is asked for while a deliberate teardown is
+    /// still in flight; honoured once that teardown's disconnect arrives.
+    private var rearmAfterTeardown = false
 
     // MARK: - Public API
 
@@ -141,6 +144,12 @@ final class ScaleClient: NSObject, ObservableObject {
         guard let p = peripheral ?? knownPeripheral(in: central) else { return }
         peripheral = p
         p.delegate = self
+        // A connect issued while Retry's cancel is still completing could be
+        // swallowed by it; wait for didDisconnectPeripheral instead.
+        if intentionalDisconnect, p.state == .disconnecting {
+            rearmAfterTeardown = true
+            return
+        }
         central.connect(p, options: nil)
     }
 
@@ -406,6 +415,18 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         peripheral = p
         p.delegate = self
         restoredFromBackground = true
+        // The scale may already be mid-weigh-in, with its notifications still
+        // subscribed: take the cached characteristics now so a result-ready
+        // notification that beats rediscovery can still read the result.
+        for ch in (p.services ?? []).flatMap({ $0.characteristics ?? [] }) {
+            switch ch.uuid {
+            case weightMeasurement: weightChar = ch
+            case qbMeasure: qardioEngineeringChar = ch
+            case qbResult: qardioMeasurementChar = ch
+            case batteryLevel: batteryChar = ch
+            default: break
+            }
+        }
     }
 
     func centralManager(_ central: CBCentralManager,
@@ -442,6 +463,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         UserDefaults.standard.set(p.identifier.uuidString, forKey: knownScaleKey)
         // Fresh connection → clean session state so the next step-on records.
         intentionalDisconnect = false
+        rearmAfterTeardown = false
         sessionActive = false
         didFinalizeSession = false
         qardioMeasurementActive = false
@@ -473,6 +495,10 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         // by re-queuing a connect to the peripheral we just dropped.
         if intentionalDisconnect {
             intentionalDisconnect = false
+            if rearmAfterTeardown {
+                rearmAfterTeardown = false
+                central.connect(p, options: nil)
+            }
             return
         }
 

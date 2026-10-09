@@ -30,6 +30,9 @@ final class WeighInRecorder: ObservableObject {
     private func record(_ reading: ScaleReading) {
         // A shared scale reports every household member's weigh-in; only
         // save the ones attributed to this phone's owner. See issue #42.
+        // Whatever happens to this weigh-in, an older pending one no longer
+        // matches the reading on screen.
+        unsavedReading = nil
         let decision = ScaleUserBinding.decide(for: reading.scaleUser)
         knownScaleUsers = ScaleUserBinding.knownUsers()
         if case .skip(let user) = decision {
@@ -42,7 +45,6 @@ final class WeighInRecorder: ObservableObject {
             scale.status = "Weigh-in complete — not saved to Health"
             return
         }
-        unsavedReading = nil
         save(reading)
     }
 
@@ -58,6 +60,8 @@ final class WeighInRecorder: ObservableObject {
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
             } catch {
                 scale.status = "Couldn't save to Health — check Settings ▸ Privacy ▸ Health"
+                // Keep it saveable by hand unless a newer weigh-in took its place.
+                if scale.lastReading?.timestamp == reading.timestamp { unsavedReading = reading }
             }
         }
     }
