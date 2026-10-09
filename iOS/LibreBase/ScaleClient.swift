@@ -77,6 +77,7 @@ final class ScaleClient: NSObject, ObservableObject {
     /// Frames already saved with a weigh-in, so a retransmission isn't taken
     /// for part of the next one.
     private var consumedCompositionFrames: Set<Data> = []
+    private var consumedCompositionAt = Date.distantPast
     /// One consent attempt per connection, plus at most one re-registration.
     private var consentStarted = false
     private var didReregisterUser = false
@@ -84,6 +85,7 @@ final class ScaleClient: NSObject, ObservableObject {
     /// The last standard-profile weight frame that was finalized — lets a second
     /// weigh-in on the same connection through while ignoring retransmissions.
     private var finalizedWeightFrame: Data?
+    private var finalizedWeightTimestamp: Date?
     /// Services still waiting on characteristic discovery, so "no supported
     /// weight service" is decided once at the end instead of per service.
     private var servicesAwaitingCharacteristics = 0
@@ -257,12 +259,14 @@ final class ScaleClient: NSObject, ObservableObject {
         guard sessionActive, let reading = lastReading else { return }
         guard isValidWeight(reading.weightKg) else {
             sessionActive = false
+            compositionFrames.removeAll()
             status = "Measurement invalid — please step on the scale again."
             return
         }
         sessionActive = false
         didFinalizeSession = true
-        consumedCompositionFrames.formUnion(compositionFrames.map(\.data))
+        consumedCompositionFrames = Set(compositionFrames.map(\.data))
+        consumedCompositionAt = Date()
         compositionFrames.removeAll()
         status = "Weigh-in complete"
         onFinalReading?(reading)
@@ -286,7 +290,11 @@ final class ScaleClient: NSObject, ObservableObject {
         // weigh-in; an identical one is a retransmission. (A second weigh-in
         // with byte-identical weight and no timestamp is indistinguishable from
         // a retransmission and is not recorded.)
-        if didFinalizeSession, data != finalizedWeightFrame { didFinalizeSession = false }
+        // A frame carrying the same scale timestamp as the saved one belongs to
+        // that same measurement, whatever else changed in it.
+        let sameMeasurement = data == finalizedWeightFrame
+            || (weight.timestamp != nil && weight.timestamp == finalizedWeightTimestamp)
+        if didFinalizeSession, !sameMeasurement { didFinalizeSession = false }
         guard !didFinalizeSession else { return }
 
         // Note: the standard payload may carry a BMI field (flag 0x08), but it is
@@ -298,6 +306,7 @@ final class ScaleClient: NSObject, ObservableObject {
             (now.addingTimeInterval(-7 * 86_400)...now.addingTimeInterval(300)).contains($0) ? $0 : nil
         } ?? now
         finalizedWeightFrame = data
+        finalizedWeightTimestamp = weight.timestamp
         lastReading = ScaleReading(weightKg: weight.kg, timestamp: timestamp,
                                    composition: currentComposition(weightKg: weight.kg))
         sessionActive = true
@@ -307,7 +316,7 @@ final class ScaleClient: NSObject, ObservableObject {
 
     private func parseBodyComposition(_ data: Data, from p: CBPeripheral) {
         guard !isForAnotherScaleUser(StandardScaleProfile.bodyCompositionUserIndex(data), on: p),
-              !consumedCompositionFrames.contains(data) else { return }
+              !isRetransmittedComposition(data) else { return }
         compositionFrames.append((data, Date()))
         if sessionActive, let weightKg = lastReading?.weightKg {
             lastReading?.composition = currentComposition(weightKg: weightKg)
@@ -322,6 +331,13 @@ final class ScaleClient: NSObject, ObservableObject {
         let cutoff = Date().addingTimeInterval(-10)
         compositionFrames.removeAll { $0.receivedAt < cutoff }
         return StandardScaleProfile.parseBodyComposition(frames: compositionFrames.map(\.data), weightKg: weightKg)
+    }
+
+    /// A frame already saved with the weigh-in that just finished. Only for a
+    /// short while: later, identical bytes are a new weigh-in with the same
+    /// rounded percentages.
+    private func isRetransmittedComposition(_ data: Data) -> Bool {
+        Date().timeIntervalSince(consumedCompositionAt) < 10 && consumedCompositionFrames.contains(data)
     }
 
     private func isForAnotherScaleUser(_ index: UInt8?, on p: CBPeripheral) -> Bool {
@@ -521,6 +537,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         compositionFrames.removeAll()
         consumedCompositionFrames.removeAll()
         finalizedWeightFrame = nil
+        finalizedWeightTimestamp = nil
         consentStarted = false
         didReregisterUser = false
         // Recon: discover everything. Otherwise just the services we need.
