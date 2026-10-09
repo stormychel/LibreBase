@@ -65,4 +65,57 @@ struct LibreBaseTests {
         defaults.set(true, forKey: ScaleUserBinding.saveAnyUserKey)
         #expect(ScaleUserBinding.decide(for: other, defaults: defaults) == .save)
     }
+
+    // MARK: - Standard SIG profile (QardioBase X, issue #41)
+
+    @Test func parsesStandardWeightMeasurement() throws {
+        // SI, no optional fields: 14280 × 0.005 kg = 71.4 kg.
+        #expect(StandardScaleProfile.parseWeight(Data([0x00, 0xC8, 0x37]))?.kg == 71.4)
+        // Imperial: 15000 × 0.01 lb.
+        let lb = try #require(StandardScaleProfile.parseWeight(Data([0x01, 0x98, 0x3A])))
+        #expect(abs(lb.kg - 68.0389) < 0.001)
+        #expect(StandardScaleProfile.parseWeight(Data([0x00, 0xC8])) == nil)
+    }
+
+    @Test func parsesWeightTimestamp() throws {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        // flags 0x02 (timestamp), weight, 2026-10-09 07:30:15.
+        let frame = Data([0x02, 0xC8, 0x37, 0xEA, 0x07, 10, 9, 7, 30, 15])
+        let weight = try #require(StandardScaleProfile.parseWeight(frame, calendar: utc))
+        let c = utc.dateComponents([.year, .month, .day, .hour, .minute, .second], from: try #require(weight.timestamp))
+        #expect([c.year, c.month, c.day, c.hour, c.minute, c.second] == [2026, 10, 9, 7, 30, 15])
+    }
+
+    @Test func parsesBodyCompositionMeasurement() {
+        // flags 0x0510: muscle % (bit 4), water mass (bit 8), weight (bit 10).
+        // fat 22.0 %, muscle 37.0 %, water 35.7 kg, weight 71.4 kg → water 50 %.
+        let frame = Data([0x10, 0x05, 0xDC, 0x00, 0x72, 0x01, 0xE4, 0x1B, 0xC8, 0x37])
+        #expect(StandardScaleProfile.parseBodyComposition(frame)
+                == BodyComposition(fatPct: 22, waterPct: 50, musclePct: 37))
+        // Unsuccessful measurement, nothing else: no composition.
+        #expect(StandardScaleProfile.parseBodyComposition(Data([0x00, 0x00, 0xFF, 0xFF])) == nil)
+        // Flag promises a field the frame doesn't carry.
+        #expect(StandardScaleProfile.parseBodyComposition(Data([0x10, 0x00, 0xDC, 0x00])) == nil)
+    }
+
+    @Test func encodesCurrentTime() {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        // 2026-10-09 07:30:15 UTC is a Friday (Bluetooth weekday 5).
+        let date = utc.date(from: DateComponents(year: 2026, month: 10, day: 9, hour: 7, minute: 30, second: 15))!
+        #expect(StandardScaleProfile.currentTime(date, calendar: utc)
+                == Data([0xEA, 0x07, 10, 9, 7, 30, 15, 5, 0, 0]))
+    }
+
+    @Test func userControlPointFrames() {
+        typealias ControlPoint = StandardScaleProfile.ControlPoint
+        #expect(ControlPoint.register(consentCode: 1234) == Data([0x01, 0xD2, 0x04]))
+        #expect(ControlPoint.consent(userIndex: 2, consentCode: 1234) == Data([0x02, 0x02, 0xD2, 0x04]))
+        #expect(ControlPoint.parseResponse(Data([0x20, 0x01, 0x01, 0x02]))
+                == ControlPoint.Response(request: 0x01, succeeded: true, userIndex: 2))
+        #expect(ControlPoint.parseResponse(Data([0x20, 0x02, 0x05]))
+                == ControlPoint.Response(request: 0x02, succeeded: false, userIndex: nil))
+        #expect(ControlPoint.parseResponse(Data([0x01, 0x02])) == nil)
+    }
 }
