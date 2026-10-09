@@ -15,7 +15,7 @@ When Qardio Inc. shut down in 2025 — app delisted, servers dark — the scales
 
 </div>
 
-> **Compatibility:** tested only with the **original QardioBase (1st generation, model B100)**. QardioBase 2 and QardioBase X are **untested** — they may work, but no promises. **Have another Qardio Base?** Please try LibreBase and tell us how it went — email **librebaseapp@michelstorms.dev** or send a capture log (see [Contributing](#contributing)). Your reports help us support more scales.
+> **Compatibility:** works with the **original QardioBase (1st generation, model B100)** and the **QardioBase 2 (B200)**. The **QardioBase X** speaks a different profile and does **not** work yet. **Have another Qardio Base?** Please try LibreBase and tell us how it went — email **librebaseapp@michelstorms.dev** or send a capture log (see [Contributing](#contributing)). Your reports help us support more scales.
 
 ---
 
@@ -40,7 +40,7 @@ Important note: this app will always remain free and an Android version may be c
 ## Requirements
 
 - iPhone running iOS 26.5 or later.
-- A **QardioBase (1st generation, model B100)** smart scale — the only model tested so far. QardioBase 2 / X are untested; see [Supported hardware](#supported-hardware).
+- A **QardioBase (1st generation, B100)** or **QardioBase 2 (B200)** smart scale. The QardioBase X is not supported yet; see [Supported hardware](#supported-hardware).
 - To build and run on a device: Xcode 26+ and an Apple Developer account (HealthKit requires a provisioned device, not the simulator, for real data).
 
 ## Build & run
@@ -98,15 +98,16 @@ LibreBase has no servers, no analytics, and no network code. Everything happens 
 | Model | Status |
 |-------|--------|
 | QardioBase (1st gen, B100) | ✅ Tested — weight → Health works |
-| QardioBase 2 | ❓ Untested — likely similar profile |
-| QardioBase X | ❓ Untested — newer/rechargeable, may differ |
+| QardioBase 2 (B200) | ✅ Verified by a tester — same profile as the B100 |
+| QardioBase X (BX00) | ❌ Not working yet — standard SIG profile, no weight received (#41) |
 
-Body composition (fat %, water, muscle, bone) is present in the scale's JSON but **not yet parsed or saved** — see the roadmap.
+Body composition comes from the scale's own result JSON: **body fat %** and the **lean body mass** derived from it are saved to Apple Health; water, muscle and bone are shown in the app only (HealthKit has no types for them). It is skipped when the scale reports an implausible impedance — weigh in barefoot.
+
+On a shared scale, LibreBase saves only the weigh-ins of one on-scale user (the first one it sees; change it under **Save weigh-ins for** on the main screen), so other household members' weights don't land in your Apple Health.
 
 ## Roadmap
 
-- Parse and save **body composition** (bioimpedance → fat %, lean mass) to HealthKit.
-- Verify and broaden **QardioBase 2 / X** support.
+- **QardioBase X** support.
 - Weigh-in history view in-app.
 - Contribute a **QardioBase driver to [openScale](https://github.com/oliexdev/openScale)** on the Android side.
 
@@ -143,13 +144,27 @@ The tested unit does **not** expose the standard Weight Scale (`0x181D`) or Body
 
 ### Final measurement JSON
 
-After state `06`, reading `B24F98BE-…` returns plain UTF-8 JSON. This is the reliable source LibreBase uses (only `weight` is consumed today):
+After state `06`, reading `B24F98BE-…` returns plain UTF-8 JSON. This is the reliable source LibreBase uses. A B100 result, and a QardioBase 2 (B200) one:
 
 ```json
 {"weight":"76.0","bmi":"19.3","z":"2031","fat":"57","tbw":"31","bmc":"3","mt":"9","sm":"17"}
+{"id":"…","weight":"71.4","bmi":"24.7","z":"574","fat":"22","tbw":"50","bmc":"4","mt":"14","sm":"37","algorithm":"0","user":"daddy","userid":"…"}
 ```
 
-`fat`, `tbw` (total body water), `bmc` (bone mineral content), `mt`, `sm` (skeletal muscle) are the body-composition fields awaiting a parser. The scale-provided `bmi` is ignored (see [BMI & units](#bmi--units)).
+| Field | Meaning | Used |
+|-------|---------|------|
+| `weight` | kg | ✅ |
+| `z` | foot-to-foot impedance (Ω) | gate: outside 200–1200 the composition is discarded (the B100 sample above, `z` 2031, is noise) |
+| `fat` | body fat % | ✅ shown, saved to Health |
+| `tbw` | total body water % | shown |
+| `sm` | skeletal muscle % | shown |
+| `bmc` | bone mineral content % | shown |
+| `mt` | unconfirmed | ignored |
+| `algorithm` | body-composition model the scale used | ignored |
+| `user` / `userid` | on-scale user the weigh-in was attributed to (B200) | ✅ filters whose weigh-ins are saved |
+| `bmi` | from a height stored on the scale | ignored (see [BMI & units](#bmi--units)) |
+
+The B200 exposes the same three characteristics as the B100 (`A78AF805-…` `read,write,notify`; `9F3F4E1B-…` `write,writeNR,notify`; `B24F98BE-…` `read`) and no standard `181D`/`181B` service.
 
 ### Decoding the engineering stream (optional)
 
