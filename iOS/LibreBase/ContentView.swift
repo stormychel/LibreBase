@@ -14,6 +14,10 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("autoSaveToHealth") private var autoSaveToHealth = true
     @AppStorage("heightCm") private var heightCm = 0.0
+    @AppStorage(ScaleUserBinding.boundIDKey) private var scaleUserID = ""
+    @AppStorage(ScaleUserBinding.saveAnyUserKey) private var saveAnyScaleUser = false
+    /// Mirrors `ScaleUserBinding.knownUsers()`; refreshed after each weigh-in.
+    @State private var knownScaleUsers: [String: String] = ScaleUserBinding.knownUsers()
     @State private var showHeightSheet = false
     @State private var showSettings = false
     @State private var showReportScale = false
@@ -58,6 +62,19 @@ struct ContentView: View {
         case ..<30:   return ("Overweight", .orange)
         default:      return ("Obese", .red)
         }
+    }
+
+    /// The scale's own body composition for the reading on screen, when it sent any.
+    private var compositionLine: String? {
+        guard let c = scale.lastReading?.composition else { return nil }
+        let parts = [("Fat", c.fatPct), ("Water", c.waterPct), ("Muscle", c.musclePct), ("Bone", c.bonePct)]
+            .compactMap { label, value in value.map { "\(label) \(Int($0.rounded()))%" } }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private var scaleUserLabel: String {
+        if saveAnyScaleUser { return "Everyone" }
+        return knownScaleUsers[scaleUserID] ?? "Not set"
     }
 
     /// Current height rendered in the user's preferred unit, or a prompt if unset.
@@ -170,10 +187,22 @@ struct ContentView: View {
             // finalize while it's up. Installing it first avoids dropping
             // that first reading.
             scale.onFinalReading = { reading in
+                // A shared scale reports every household member's weigh-in; only
+                // save the ones attributed to this phone's owner. See issue #42.
+                let decision = ScaleUserBinding.decide(for: reading.scaleUser)
+                knownScaleUsers = ScaleUserBinding.knownUsers()
+                if case .skip(let user) = decision {
+                    scale.status = "Weigh-in for “\(user.name)” — not saved to Health"
+                    return
+                }
                 guard autoSaveToHealth else { return }
                 Task { @MainActor in
                     do {
                         try await health.saveWeight(kg: reading.weightKg, date: reading.timestamp)
+                        if let composition = reading.composition {
+                            await health.saveComposition(composition, weightKg: reading.weightKg,
+                                                         date: reading.timestamp)
+                        }
                         scale.status = "Saved to Apple Health"
                         UINotificationFeedbackGenerator().notificationOccurred(.success)
                     } catch {
@@ -333,6 +362,13 @@ struct ContentView: View {
                     }
                 }
 
+                if let compositionLine {
+                    Text(compositionLine)
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .multilineTextAlignment(.center)
+                }
+
                 if let r = scale.lastReading {
                     Text(r.timestamp, format: Date.FormatStyle(date: .abbreviated, time: .shortened))
                         .font(.footnote)
@@ -430,6 +466,50 @@ struct ContentView: View {
                 .padding(.vertical, 14)
                 .padding(.horizontal, 16)
             }
+
+            // Only scales that tag weigh-ins with a user (QardioBase 2) get this
+            // row — it appears after the first such weigh-in.
+            if !knownScaleUsers.isEmpty {
+                Divider().padding(.leading, 16)
+
+                Menu {
+                    ForEach(knownScaleUsers.sorted { $0.value < $1.value }, id: \.key) { id, name in
+                        Button {
+                            scaleUserID = id
+                            saveAnyScaleUser = false
+                        } label: {
+                            if !saveAnyScaleUser && scaleUserID == id {
+                                Label(name, systemImage: "checkmark")
+                            } else {
+                                Text(name)
+                            }
+                        }
+                    }
+                    Divider()
+                    Button {
+                        saveAnyScaleUser = true
+                    } label: {
+                        if saveAnyScaleUser {
+                            Label("Everyone", systemImage: "checkmark")
+                        } else {
+                            Text("Everyone")
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Text("Save weigh-ins for")
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text(scaleUserLabel)
+                            .foregroundStyle(.secondary)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption.bold())
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.vertical, 14)
+                    .padding(.horizontal, 16)
+                }
+            }
         }
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
@@ -464,7 +544,7 @@ struct ContentView: View {
                     Text("Support & Legal")
                 } footer: {
                     VStack(spacing: 10) {
-                        Text("LibreBase is tested only with the original QardioBase (1st gen). Have a QardioBase 2 or X? Tap “Report your scale” — we'd love to help support it.")
+                        Text("LibreBase works with the original QardioBase (1st gen) and the QardioBase 2. Have a QardioBase X? Tap “Report your scale” — we'd love to help support it.")
                         Text(Constants.versionLabel + " · open source, MIT licensed.")
                     }
                     .frame(maxWidth: .infinity)
