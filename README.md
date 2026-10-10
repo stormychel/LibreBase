@@ -93,6 +93,12 @@ Toggling **Recon mode** makes the client discover *every* service and characteri
 
 LibreBase has no servers, no analytics, and no network code. Everything happens on-device over Bluetooth and through HealthKit. Your weight and height never leave your phone except where *you* sync HealthKit via iCloud. The app declares `ITSAppUsesNonExemptEncryption = false` (it uses no encryption beyond the OS).
 
+## Background weigh-ins
+
+Once LibreBase has connected to your scale, you don't need to open it for every weigh-in: step on, and the weight is saved to Apple Health while the app stays in the background. It works by leaving a Bluetooth connection request pending (CoreBluetooth `bluetooth-central` background mode plus state restoration), which iOS completes when the scale wakes. Nothing scans or runs in between.
+
+Limits set by iOS: it stops working if you **force-quit** LibreBase from the app switcher (open the app once to re-arm it), after Bluetooth is switched off and on, and after a reboot until the phone has been unlocked and the app opened once.
+
 ## Supported hardware
 
 | Model | Status |
