@@ -108,7 +108,7 @@ Body composition (fat %, water, muscle, bone) is present in the scale's JSON but
 - Parse and save **body composition** (bioimpedance → fat %, lean mass) to HealthKit.
 - Verify and broaden **QardioBase 2 / X** support.
 - Weigh-in history view in-app.
-- Contribute a **QardioBase driver to [openScale](https://github.com/oliexdev/openScale)** on the Android side.
+- ~~Contribute a **QardioBase driver to [openScale](https://github.com/oliexdev/openScale)** on the Android side.~~ Done by the community: [openScale PR #1557](https://github.com/oliexdev/openScale/pull/1557) adds QardioBase / QardioBase 2 support (in review upstream). Android users, follow that PR.
 
 ## Contributing
 
@@ -122,6 +122,7 @@ Issues and PRs welcome — especially capture logs from a QardioBase 2 or X (use
 
 - **LibreArm** — the open-source QardioArm revival that proved the approach (BLE reverse-engineering + HealthKit, approved on the App Store as a wellness app).
 - **[openScale](https://github.com/oliexdev/openScale)** (oliexdev) — the reference open-source scale project and its "how to support a new scale" workflow.
+- **[@wedsa5](https://github.com/wedsa5)** — reverse-engineered the QardioBase 2 for openScale ([PR #1557](https://github.com/oliexdev/openScale/pull/1557)); the state values, padded result JSON and connect-time result read noted below come from that work.
 - **Nordic nRF Connect / nRF Sniffer** and Apple **PacketLogger** — the BLE recon and capture tooling.
 
 ---
@@ -136,9 +137,9 @@ The tested unit does **not** expose the standard Weight Scale (`0x181D`) or Body
 
 | UUID | Meaning observed |
 |------|------------------|
-| `A78AF805-8F3F-4E8F-A964-318B768BC38C` | control/state notify: `00` idle, `03` measuring, `06` done |
-| `9F3F4E1B-37D7-4F95-B374-CF585D808BEB` | noisy engineering/debug stream; also accepts config write `00 00 01 01` |
-| `B24F98BE-9CD4-4F82-B935-01F18F104EDE` | final measurement JSON; read after state `06` |
+| `A78AF805-8F3F-4E8F-A964-318B768BC38C` | control/state notify: `00` idle, `01` configuration mode, `02` ready, `03` measuring, `06` done (result ready), `0C` going to sleep (the scale then disconnects) |
+| `9F3F4E1B-37D7-4F95-B374-CF585D808BEB` | noisy engineering/debug stream; also the command channel (`00 00 <cmd> [args]`, replies `00 00 <cmd> <value>`) |
+| `B24F98BE-9CD4-4F82-B935-01F18F104EDE` | final measurement JSON; read after state `06`. Once read, further reads fail until the next weigh-in |
 | `1EC92A15-14E0-43E7-A990-CB37000990BA` | calibration JSON |
 
 ### Final measurement JSON
@@ -150,6 +151,13 @@ After state `06`, reading `B24F98BE-…` returns plain UTF-8 JSON. This is the r
 ```
 
 `fat`, `tbw` (total body water), `bmc` (bone mineral content), `mt`, `sm` (skeletal muscle) are the body-composition fields awaiting a parser. The scale-provided `bmi` is ignored (see [BMI & units](#bmi--units)).
+
+Notes from the openScale QardioBase 2 driver (see Acknowledgements):
+
+- The JSON can be padded with trailing NUL bytes; strip them before parsing.
+- The scale may already be at state `06` when the link comes up (it measures while the phone is still connecting), so LibreBase reads the state once on connect as well as subscribing to it.
+- On the QardioBase 2, `id` ends in the weigh-in time as 10 digits of Unix seconds (the scale clock, set by the app over the command channel), and `user`/`userid` name the on-scale profile; a guest weigh-in has neither. `bmc` is bone mass in whole **kg**, not a percentage. `mt` is Qardio's own "muscle" share of body weight, not skeletal muscle.
+- Profiles, time sync, select-user and reset all go through the command channel; the openScale driver documents the commands if LibreBase ever manages on-scale users.
 
 ### Decoding the engineering stream (optional)
 
