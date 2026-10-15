@@ -159,9 +159,13 @@ struct HistoryView: View {
     private func load() async {
         isLoading = true
         let start = Calendar.current.date(byAdding: .day, value: -range.days, to: Date()) ?? Date()
-        weighIns = ScreenshotMode.isActive
+        let result = ScreenshotMode.isActive
             ? ScreenshotMode.demoWeighIns().filter { $0.date >= start }
             : await health.weighIns(since: start)
+        // The HealthKit query ignores cancellation: when the range changed while
+        // it ran, the newer load owns the state, so drop this stale result.
+        guard !Task.isCancelled else { return }
+        weighIns = result
         isLoading = false
     }
 }
