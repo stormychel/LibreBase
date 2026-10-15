@@ -684,7 +684,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "LibreBase connects to your Qardio scale over Bluetooth to read your weight.";
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "LibreBase reads your height from Apple Health to calculate your BMI.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "LibreBase reads your height from Apple Health to calculate your BMI, and your past weigh-ins to show your weight history.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "LibreBase saves your weight, and any height you enter, to Apple Health.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -727,7 +727,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "LibreBase connects to your Qardio scale over Bluetooth to read your weight.";
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "LibreBase reads your height from Apple Health to calculate your BMI.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "LibreBase reads your height from Apple Health to calculate your BMI, and your past weigh-ins to show your weight history.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "LibreBase saves your weight, and any height you enter, to Apple Health.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
