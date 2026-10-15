@@ -252,7 +252,7 @@ struct OnboardingView: View {
 
     // MARK: - Components
 
-    private func infoRow(icon: String, title: String, detail: String) -> some View {
+    private func infoRow(icon: String, title: LocalizedStringKey, detail: LocalizedStringKey) -> some View {
         HStack(alignment: .top, spacing: 16) {
             Image(systemName: icon)
                 .font(.title2)
@@ -273,11 +273,11 @@ struct OnboardingView: View {
     @ViewBuilder
     private func permissionRow(
         icon: String,
-        title: String,
-        description: String,
+        title: LocalizedStringKey,
+        description: LocalizedStringKey,
         granted: Bool,
         denied: Bool,
-        requestTitle: String,
+        requestTitle: LocalizedStringKey,
         request: @escaping () -> Void
     ) -> some View {
         HStack(spacing: 14) {
@@ -313,7 +313,7 @@ struct OnboardingView: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    private func primaryButton(_ title: String, enabled: Bool = true, action: @escaping () -> Void) -> some View {
+    private func primaryButton(_ title: LocalizedStringKey, enabled: Bool = true, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(.headline)

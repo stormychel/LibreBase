@@ -31,11 +31,11 @@ struct ScaleReading {
 /// produces the bytes needed to finalize the parser.
 final class ScaleClient: NSObject, ObservableObject {
     // MARK: - UI state
-    @Published var status = "Searching for scale…"
+    @Published var status = String(localized: "Searching for scale…")
     @Published var lastReading: ScaleReading?
     @Published var isConnected = false
     @Published var batteryLevelPct: Int?
-    @Published var batteryStatusLine = "Battery: unavailable"
+    @Published var batteryStatusLine = String(localized: "Battery: unavailable")
 
     // MARK: - Recon (Phase 1)
     /// When true, discover ALL services/characteristics and log every payload as
@@ -117,8 +117,8 @@ final class ScaleClient: NSObject, ObservableObject {
     func loadDemoReading() {
         isConnected = true
         batteryLevelPct = 84
-        batteryStatusLine = "Battery: 84%"
-        status = "Weigh-in complete"
+        batteryStatusLine = String(localized: "Battery: 84%")
+        status = String(localized: "Weigh-in complete")
         var components = DateComponents()
         components.year = 2026; components.month = 6; components.day = 1
         components.hour = 9; components.minute = 41
@@ -134,13 +134,13 @@ final class ScaleClient: NSObject, ObservableObject {
     func resumeScanning() {
         guard let central, central.state == .poweredOn, !isConnected else { return }
         central.scanForPeripherals(withServices: nil, options: nil)
-        if lastReading == nil { status = "Searching… step on the scale to connect" }
+        if lastReading == nil { status = String(localized: "Searching… step on the scale to connect") }
     }
 
     /// Begin scanning/connecting to the scale. Call on app start or on Retry.
     func startConnect(timeout: TimeInterval = 30) {
         guard let central, central.state == .poweredOn else {
-            status = "Bluetooth unavailable"
+            status = String(localized: "Bluetooth unavailable")
             return
         }
 
@@ -162,7 +162,7 @@ final class ScaleClient: NSObject, ObservableObject {
         }
         if reconMode { reconLog.removeAll() }
 
-        status = "Searching for scale…"
+        status = String(localized: "Searching for scale…")
         central.stopScan()
         // Scan unfiltered: the QardioBase does not advertise its vendor service
         // UUID, so a service-filtered scan never surfaces it. We match by name
@@ -189,16 +189,16 @@ final class ScaleClient: NSObject, ObservableObject {
     private func updateBatteryStatus(_ level: Int?) {
         guard let level = level else {
             batteryLevelPct = nil
-            batteryStatusLine = "Battery: unavailable"
+            batteryStatusLine = String(localized: "Battery: unavailable")
             return
         }
         batteryLevelPct = level
         if level <= 10 {
-            batteryStatusLine = "Battery: \(level)% (Critical)"
+            batteryStatusLine = String(localized: "Battery: \(level)% (Critical)")
         } else if level <= 20 {
-            batteryStatusLine = "Battery: \(level)% (Low)"
+            batteryStatusLine = String(localized: "Battery: \(level)% (Low)")
         } else {
-            batteryStatusLine = "Battery: \(level)%"
+            batteryStatusLine = String(localized: "Battery: \(level)%")
         }
     }
 
@@ -222,12 +222,12 @@ final class ScaleClient: NSObject, ObservableObject {
         guard sessionActive, let reading = lastReading else { return }
         guard isValidWeight(reading.weightKg) else {
             sessionActive = false
-            status = "Measurement invalid — please step on the scale again."
+            status = String(localized: "Measurement invalid — please step on the scale again.")
             return
         }
         sessionActive = false
         didFinalizeSession = true
-        status = "Weigh-in complete"
+        status = String(localized: "Weigh-in complete")
         onFinalReading?(reading)
     }
 
@@ -254,7 +254,7 @@ final class ScaleClient: NSObject, ObservableObject {
             guard !self.didFinalizeSession else { return }
             self.lastReading = reading
             self.sessionActive = true
-            self.status = "Measuring…"
+            self.status = String(localized: "Measuring…")
             self.scheduleFinalize()
         }
     }
@@ -314,7 +314,7 @@ final class ScaleClient: NSObject, ObservableObject {
             self.lastReading = reading
             self.sessionActive = false
             self.qardioMeasurementActive = false
-            self.status = "Weigh-in complete"
+            self.status = String(localized: "Weigh-in complete")
             self.onFinalReading?(reading)
         }
     }
@@ -349,7 +349,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         case .poweredOn:
             startConnect()
         default:
-            status = "Bluetooth not available"
+            status = String(localized: "Bluetooth not available")
             isConnected = false
         }
     }
@@ -376,7 +376,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         // scale sleeps before the connect completes, the timeout fires and the
         // pending connect stays queued to finish when it wakes.
         central.stopScan()
-        status = "Connecting…"
+        status = String(localized: "Connecting…")
         self.peripheral = p
         p.delegate = self
         central.connect(p, options: nil)
@@ -390,7 +390,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         sessionActive = false
         didFinalizeSession = false
         qardioMeasurementActive = false
-        status = "Connected — discovering…"
+        status = String(localized: "Connected — discovering…")
         // Recon: discover everything. Otherwise just the services we need.
         p.discoverServices(reconMode ? nil
             : [weightScaleService, bodyCompService, batteryService, deviceInfoService, qbService])
@@ -401,7 +401,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         intentionalDisconnect = false
         // Keep trying on our own: resume scanning so the next advertisement
         // reconnects automatically rather than stranding the user on a manual tap.
-        status = "Reconnecting… step on the scale"
+        status = String(localized: "Reconnecting… step on the scale")
         central.scanForPeripherals(withServices: nil, options: nil)
     }
 
@@ -426,7 +426,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         // timeout — CoreBluetooth keeps it queued and reconnects the moment the
         // scale wakes on the next step-on, so repeated weigh-ins record without
         // tapping Retry.
-        status = "Step on the scale to weigh again"
+        status = String(localized: "Step on the scale to weigh again")
         central.connect(p, options: nil)
     }
 
@@ -478,15 +478,15 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
             }
         }
         if weightChar != nil || qardioMeasurementChar != nil {
-            status = "Connected — step on the scale"
+            status = String(localized: "Connected — step on the scale")
         } else if !reconMode {
-            status = "Scale found, but no supported weight service."
+            status = String(localized: "Scale found, but no supported weight service.")
         }
     }
 
     func peripheral(_ p: CBPeripheral, didUpdateValueFor ch: CBCharacteristic, error: Error?) {
         guard error == nil, let data = ch.value else {
-            status = "Read error"
+            status = String(localized: "Read error")
             return
         }
 
@@ -499,7 +499,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
                 qardioMeasurementActive = true
                 sessionActive = true
                 didFinalizeSession = false
-                status = "Measuring…"
+                status = String(localized: "Measuring…")
             case 0x06:
                 qardioMeasurementActive = false
                 readQardioMeasurementJSON()
@@ -538,7 +538,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     func peripheral(_ p: CBPeripheral, didUpdateNotificationStateFor ch: CBCharacteristic, error: Error?) {
         if let error = error {
-            status = "Notify error: \(error.localizedDescription)"
+            status = String(localized: "Notify error: \(error.localizedDescription)")
         }
     }
 }

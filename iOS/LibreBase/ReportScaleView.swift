@@ -101,7 +101,7 @@ struct ReportScaleView: View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Step on your scale now", systemImage: "figure.stand")
                 .font(.headline)
-            Text("Stand still until your weight settles, then step off. LibreBase is recording how your scale communicates — \(capturedLines) line\(capturedLines == 1 ? "" : "s") captured so far.")
+            Text("Stand still until your weight settles, then step off. LibreBase is recording how your scale communicates — lines captured so far: \(capturedLines).")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
