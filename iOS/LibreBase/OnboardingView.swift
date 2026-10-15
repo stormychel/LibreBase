@@ -184,7 +184,7 @@ struct OnboardingView: View {
                 permissionRow(
                     icon: "heart.text.square.fill",
                     title: "Apple Health",
-                    description: "To save your weight, and read your height for BMI.",
+                    description: "To save your weight, and read your height for BMI and past weigh-ins for your history.",
                     granted: healthGranted,
                     denied: healthDenied,
                     requestTitle: "Allow",

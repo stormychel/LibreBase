@@ -17,7 +17,7 @@ captures on the simulator, and frames the result in an Apple device bezel.
 - **`Scripts/generate-screenshots.sh`** orchestrates build → capture → frame.
 
 Scenes: `welcome`, `how_it_works`, `reading` (demo 72.6 kg weigh-in + BMI),
-`privacy`.
+`privacy`, `history` (weigh-in history sheet with twelve weeks of demo data).
 
 ## Generate
 
