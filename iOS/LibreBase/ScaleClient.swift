@@ -177,8 +177,8 @@ final class ScaleClient: NSObject, ObservableObject {
             // fires and we connect — no manual Retry needed. We only nudge the
             // status so the screen explains what to do.
             self.status = self.peripheral == nil
-                ? "Searching… step on the scale to connect"
-                : "Step on the scale to wake it…"
+                ? String(localized: "Searching… step on the scale to connect")
+                : String(localized: "Step on the scale to wake it…")
         }
         connectTimeoutWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: work)

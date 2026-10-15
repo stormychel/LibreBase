@@ -245,7 +245,7 @@ struct ContentView: View {
         }
         .font(.subheadline)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(scale.batteryLevelPct.map { "Battery \($0) percent" } ?? "Battery level unknown")
+        .accessibilityLabel(scale.batteryLevelPct.map { String(localized: "Battery \($0) percent") } ?? String(localized: "Battery level unknown"))
     }
 
     // MARK: - Status pills
@@ -465,7 +465,7 @@ struct ContentView: View {
                 } footer: {
                     VStack(spacing: 10) {
                         Text("LibreBase is tested only with the original QardioBase (1st gen). Have a QardioBase 2 or X? Tap “Report your scale” — we'd love to help support it.")
-                        Text(Constants.versionLabel + " · open source, MIT licensed.")
+                        Text("\(Constants.versionLabel) · open source, MIT licensed.")
                     }
                     .frame(maxWidth: .infinity)
                     .multilineTextAlignment(.center)

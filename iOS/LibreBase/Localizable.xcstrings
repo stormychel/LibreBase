@@ -40,6 +40,34 @@
         }
       }
     },
+    "%@ · open source, MIT licensed.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · Open Source, MIT-Lizenz."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · código abierto, licencia MIT."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · open source, licence MIT."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · open source, MIT-licentie."
+          }
+        }
+      }
+    },
     "%lld cm": {
       "shouldTranslate": false
     },
@@ -2033,6 +2061,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ga op de weegschaal staan"
+          }
+        }
+      }
+    },
+    "Step on the scale to wake it…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stell dich auf die Waage, um sie zu wecken …"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Súbete a la báscula para activarla…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Montez sur la balance pour la réveiller…"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ga op de weegschaal staan om hem te wekken…"
           }
         }
       }
