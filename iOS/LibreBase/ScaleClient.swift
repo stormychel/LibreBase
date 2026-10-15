@@ -95,7 +95,10 @@ final class ScaleClient: NSObject, ObservableObject {
     /// decode more than once per session. Reset when a new measurement starts.
     private var didFinalizeSession = false
     /// One retry per weigh-in for a result read that fails right after "done".
+    /// Cancelled whenever the connection or weigh-in changes, so it can't read
+    /// a later session's result.
     private var didRetryResultRead = false
+    private var resultRetryWorkItem: DispatchWorkItem?
 
     // Connect timeout
     private var connectTimeoutWorkItem: DispatchWorkItem?
@@ -395,6 +398,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         didFinalizeSession = false
         qardioMeasurementActive = false
         didRetryResultRead = false
+        resultRetryWorkItem?.cancel()
         status = "Connected — discovering…"
         // Recon: discover everything. Otherwise just the services we need.
         p.discoverServices(reconMode ? nil
@@ -417,6 +421,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         qardioEngineeringChar = nil
         qardioMeasurementChar = nil
         qardioMeasurementActive = false
+        resultRetryWorkItem?.cancel()
         updateBatteryStatus(nil)
 
         // A deliberate teardown (Retry) is owned by startConnect — don't fight it
@@ -502,10 +507,12 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
             log("qardio measurement read failed: \(error?.localizedDescription ?? "?")")
             if !didFinalizeSession, !didRetryResultRead {
                 didRetryResultRead = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                let work = DispatchWorkItem { [weak self] in
                     guard let self, !self.didFinalizeSession else { return }
                     self.readQardioMeasurementJSON()
                 }
+                resultRetryWorkItem = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
             }
             return
         }
@@ -524,6 +531,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
                 sessionActive = true
                 didFinalizeSession = false
                 didRetryResultRead = false
+                resultRetryWorkItem?.cancel()
                 status = "Measuring…"
             case 0x06:
                 qardioMeasurementActive = false
