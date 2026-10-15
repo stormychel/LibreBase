@@ -156,7 +156,7 @@ Notes from the openScale QardioBase 2 driver (see Acknowledgements):
 
 - The JSON can be padded with trailing NUL bytes; strip them before parsing.
 - The scale may already be at state `06` when the link comes up (it measures while the phone is still connecting), so LibreBase reads the state once on connect as well as subscribing to it.
-- On the QardioBase 2, `id` ends in the weigh-in time as 10 digits of Unix seconds (the scale clock, set by the app over the command channel), and `user`/`userid` name the on-scale profile; a guest weigh-in has neither. `bmc` is bone mass in whole **kg**, not a percentage. `mt` is Qardio's own "muscle" share of body weight, not skeletal muscle.
+- On the QardioBase 2, `id` ends in the weigh-in time as 10 digits of Unix seconds (the scale clock, set by the app over the command channel), and `user`/`userid` name the on-scale profile; a guest weigh-in has neither. `bmc` is most likely bone mass in whole **kg** rather than a percentage (inferred: the official app never displayed it). `mt` is Qardio's own "muscle" share of body weight, not skeletal muscle.
 - Profiles, time sync, select-user and reset all go through the command channel; the openScale driver documents the commands if LibreBase ever manages on-scale users.
 
 ### Decoding the engineering stream (optional)
