@@ -6,10 +6,6 @@
 	objectVersion = 77;
 	objects = {
 
-/* Begin PBXBuildFile section */
-		D9C079932FD1655A003AC2AA /* LibreBase Watch App Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = D9C079732FD16558003AC2AA /* LibreBase Watch App Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-/* End PBXBuildFile section */
-
 /* Begin PBXContainerItemProxy section */
 		D9C079802FD1655A003AC2AA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -47,20 +43,6 @@
 			remoteInfo = LibreBase;
 		};
 /* End PBXContainerItemProxy section */
-
-/* Begin PBXCopyFilesBuildPhase section */
-		D9C079942FD1655A003AC2AA /* Embed Watch Content */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
-			dstSubfolderSpec = 16;
-			files = (
-				D9C079932FD1655A003AC2AA /* LibreBase Watch App Watch App.app in Embed Watch Content */,
-			);
-			name = "Embed Watch Content";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		D9C079732FD16558003AC2AA /* LibreBase Watch App Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "LibreBase Watch App Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -267,7 +249,6 @@
 				D9DD48EC2FCEB5A800DAE703 /* Sources */,
 				D9DD48ED2FCEB5A800DAE703 /* Frameworks */,
 				D9DD48EE2FCEB5A800DAE703 /* Resources */,
-				D9C079942FD1655A003AC2AA /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
@@ -512,15 +493,13 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "LibreBase Watch App Watch App/LibreBaseWatch.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 12;
-				DEVELOPMENT_TEAM = 4VYV5C3L3Y;
+				DEVELOPMENT_TEAM = 829C29LBW8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				CODE_SIGN_ENTITLEMENTS = "LibreBase Watch App Watch App/LibreBaseWatch.entitlements";
 				INFOPLIST_KEY_CFBundleDisplayName = "LibreBase Watch App";
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "LibreBase shows your most recent weight and BMI from Apple Health.";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "LibreBase keeps your weight in sync with Apple Health.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.michelstorms.LibreBase;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -528,7 +507,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.michelstorms.LibreBase.watchkitapp;
+				PRODUCT_BUNDLE_IDENTIFIER = no.matsagbo.LibreBaseTest;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
@@ -548,15 +527,13 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "LibreBase Watch App Watch App/LibreBaseWatch.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 12;
-				DEVELOPMENT_TEAM = 4VYV5C3L3Y;
+				DEVELOPMENT_TEAM = 829C29LBW8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				CODE_SIGN_ENTITLEMENTS = "LibreBase Watch App Watch App/LibreBaseWatch.entitlements";
 				INFOPLIST_KEY_CFBundleDisplayName = "LibreBase Watch App";
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "LibreBase shows your most recent weight and BMI from Apple Health.";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "LibreBase keeps your weight in sync with Apple Health.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.michelstorms.LibreBase;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -564,7 +541,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.michelstorms.LibreBase.watchkitapp;
+				PRODUCT_BUNDLE_IDENTIFIER = no.matsagbo.LibreBaseTest;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
@@ -585,10 +562,10 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 12;
-				DEVELOPMENT_TEAM = 4VYV5C3L3Y;
+				DEVELOPMENT_TEAM = 829C29LBW8;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.michelstorms.LibreBase-Watch-App-Watch-AppTests";
+				PRODUCT_BUNDLE_IDENTIFIER = no.matsagbo.LibreBaseTest;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -608,10 +585,10 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 12;
-				DEVELOPMENT_TEAM = 4VYV5C3L3Y;
+				DEVELOPMENT_TEAM = 829C29LBW8;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.michelstorms.LibreBase-Watch-App-Watch-AppTests";
+				PRODUCT_BUNDLE_IDENTIFIER = no.matsagbo.LibreBaseTest;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -630,10 +607,10 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 12;
-				DEVELOPMENT_TEAM = 4VYV5C3L3Y;
+				DEVELOPMENT_TEAM = 829C29LBW8;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.michelstorms.LibreBase-Watch-App-Watch-AppUITests";
+				PRODUCT_BUNDLE_IDENTIFIER = no.matsagbo.LibreBaseTest;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -652,10 +629,10 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 12;
-				DEVELOPMENT_TEAM = 4VYV5C3L3Y;
+				DEVELOPMENT_TEAM = 829C29LBW8;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.michelstorms.LibreBase-Watch-App-Watch-AppUITests";
+				PRODUCT_BUNDLE_IDENTIFIER = no.matsagbo.LibreBaseTest;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -677,7 +654,7 @@
 				CODE_SIGN_ENTITLEMENTS = LibreBase/LibreBase.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 12;
-				DEVELOPMENT_TEAM = 4VYV5C3L3Y;
+				DEVELOPMENT_TEAM = 829C29LBW8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = LibreBase/Info.plist;
@@ -685,7 +662,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "LibreBase connects to your Qardio scale over Bluetooth to read your weight.";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "LibreBase reads your height from Apple Health to calculate your BMI.";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "LibreBase saves your weight, and any height you enter, to Apple Health.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "LibreBase saves your weight, body composition, and any height you enter, to Apple Health.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -696,7 +673,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.michelstorms.LibreBase;
+				PRODUCT_BUNDLE_IDENTIFIER = no.matsagbo.LibreBaseTest;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -720,7 +697,7 @@
 				CODE_SIGN_ENTITLEMENTS = LibreBase/LibreBase.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 12;
-				DEVELOPMENT_TEAM = 4VYV5C3L3Y;
+				DEVELOPMENT_TEAM = 829C29LBW8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = LibreBase/Info.plist;
@@ -728,7 +705,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "LibreBase connects to your Qardio scale over Bluetooth to read your weight.";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "LibreBase reads your height from Apple Health to calculate your BMI.";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "LibreBase saves your weight, and any height you enter, to Apple Health.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "LibreBase saves your weight, body composition, and any height you enter, to Apple Health.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -882,11 +859,11 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 3;
-				DEVELOPMENT_TEAM = 4VYV5C3L3Y;
+				DEVELOPMENT_TEAM = 829C29LBW8;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
 				MARKETING_VERSION = 1.2;
-				PRODUCT_BUNDLE_IDENTIFIER = com.michelstorms.LibreBaseTests;
+				PRODUCT_BUNDLE_IDENTIFIER = no.matsagbo.LibreBaseTest;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -904,11 +881,11 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 3;
-				DEVELOPMENT_TEAM = 4VYV5C3L3Y;
+				DEVELOPMENT_TEAM = 829C29LBW8;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
 				MARKETING_VERSION = 1.2;
-				PRODUCT_BUNDLE_IDENTIFIER = com.michelstorms.LibreBaseTests;
+				PRODUCT_BUNDLE_IDENTIFIER = no.matsagbo.LibreBaseTest;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -925,10 +902,10 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 3;
-				DEVELOPMENT_TEAM = 4VYV5C3L3Y;
+				DEVELOPMENT_TEAM = 829C29LBW8;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.2;
-				PRODUCT_BUNDLE_IDENTIFIER = com.michelstorms.LibreBaseUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = no.matsagbo.LibreBaseTest;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -945,10 +922,10 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 3;
-				DEVELOPMENT_TEAM = 4VYV5C3L3Y;
+				DEVELOPMENT_TEAM = 829C29LBW8;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.2;
-				PRODUCT_BUNDLE_IDENTIFIER = com.michelstorms.LibreBaseUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = no.matsagbo.LibreBaseTest;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;

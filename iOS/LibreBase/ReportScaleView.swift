@@ -105,6 +105,14 @@ struct ReportScaleView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            // Rule out the cheapest cause of a silent scale before a report is sent.
+            if let pct = scale.batteryLevelPct, pct <= 20 {
+                Label("Scale battery is low (\(pct)%). A weak battery can stop the scale sending a weight — charge or replace it first if you can.",
+                      systemImage: "battery.25percent")
+                    .font(.subheadline)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if !scale.reconLog.isEmpty {
                 ScrollView {
                     Text(scale.reconLog.joined(separator: "\n"))
