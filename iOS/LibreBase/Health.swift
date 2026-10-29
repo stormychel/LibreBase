@@ -12,12 +12,15 @@ import HealthKit
 final class Health: ObservableObject {
     let store = HKHealthStore()
 
-    /// Request permission to write body mass and height, and read height (for BMI).
+    /// Request permission to write body mass, body composition and height, and
+    /// read height (for BMI).
     func requestAuth() async throws {
         guard HKHealthStore.isHealthDataAvailable() else { return }
         let mass = HKQuantityType(.bodyMass)
         let height = HKQuantityType(.height)
-        try await store.requestAuthorization(toShare: [mass, height], read: [height])
+        let fat = HKQuantityType(.bodyFatPercentage)
+        let lean = HKQuantityType(.leanBodyMass)
+        try await store.requestAuthorization(toShare: [mass, height, fat, lean], read: [height])
     }
 
     /// Share (write) authorization for body mass. HealthKit never reveals *read*
@@ -62,5 +65,21 @@ final class Health: ObservableObject {
         let quantity = HKQuantity(unit: .gramUnit(with: .kilo), doubleValue: kg)
         let sample = HKQuantitySample(type: type, quantity: quantity, start: date, end: date)
         try await store.save(sample)
+    }
+
+    /// Save the body composition HealthKit has types for: body fat % and the lean
+    /// body mass derived from it. Water, muscle and bone have no HealthKit type.
+    /// Each type is optional for the user to allow, so one being denied must not
+    /// fail the weigh-in — unauthorized types are skipped.
+    func saveComposition(_ composition: BodyComposition, weightKg: Double, date: Date) async {
+        guard let fatPct = composition.fatPct else { return }
+        let samples = [
+            (HKQuantityType(.bodyFatPercentage), HKQuantity(unit: .percent(), doubleValue: fatPct / 100)),
+            (HKQuantityType(.leanBodyMass),
+             HKQuantity(unit: .gramUnit(with: .kilo), doubleValue: weightKg * (1 - fatPct / 100))),
+        ]
+        for (type, quantity) in samples where store.authorizationStatus(for: type) == .sharingAuthorized {
+            try? await store.save(HKQuantitySample(type: type, quantity: quantity, start: date, end: date))
+        }
     }
 }
