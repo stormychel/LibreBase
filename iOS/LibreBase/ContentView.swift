@@ -53,16 +53,16 @@ struct ContentView: View {
     /// Plain-language BMI band plus the color used for its badge.
     private func bmiCategory(_ value: Double) -> (label: String, color: Color) {
         switch value {
-        case ..<18.5: return ("Underweight", .blue)
-        case ..<25:   return ("Normal", .green)
-        case ..<30:   return ("Overweight", .orange)
-        default:      return ("Obese", .red)
+        case ..<18.5: return (String(localized: "Underweight"), .blue)
+        case ..<25:   return (String(localized: "Normal"), .green)
+        case ..<30:   return (String(localized: "Overweight"), .orange)
+        default:      return (String(localized: "Obese"), .red)
         }
     }
 
     /// Current height rendered in the user's preferred unit, or a prompt if unset.
     private var heightLabel: String {
-        guard heightCm > 0 else { return "Set height" }
+        guard heightCm > 0 else { return String(localized: "Set height") }
         if useMetric { return "\(Int(heightCm.rounded())) cm" }
         let totalIn = Int((heightCm / 2.54).rounded())
         return "\(totalIn / 12)′ \(totalIn % 12)″"
@@ -174,10 +174,10 @@ struct ContentView: View {
                 Task { @MainActor in
                     do {
                         try await health.saveWeight(kg: reading.weightKg, date: reading.timestamp)
-                        scale.status = "Saved to Apple Health"
+                        scale.status = String(localized: "Saved to Apple Health")
                         UINotificationFeedbackGenerator().notificationOccurred(.success)
                     } catch {
-                        scale.status = "Couldn't save to Health — check Settings ▸ Privacy ▸ Health"
+                        scale.status = String(localized: "Couldn't save to Health — check Settings ▸ Privacy ▸ Health")
                     }
                 }
             }
@@ -185,7 +185,7 @@ struct ContentView: View {
             do {
                 try await health.requestAuth()
             } catch {
-                scale.status = "Health permission denied"
+                scale.status = String(localized: "Health permission denied")
             }
 
             // Seed height from Apple Health when the user hasn't set one
@@ -245,7 +245,7 @@ struct ContentView: View {
         }
         .font(.subheadline)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(scale.batteryLevelPct.map { "Battery \($0) percent" } ?? "Battery level unknown")
+        .accessibilityLabel(scale.batteryLevelPct.map { String(localized: "Battery \($0) percent") } ?? String(localized: "Battery level unknown"))
     }
 
     // MARK: - Status pills
@@ -465,7 +465,7 @@ struct ContentView: View {
                 } footer: {
                     VStack(spacing: 10) {
                         Text("LibreBase is tested only with the original QardioBase (1st gen). Have a QardioBase 2 or X? Tap “Report your scale” — we'd love to help support it.")
-                        Text(Constants.versionLabel + " · open source, MIT licensed.")
+                        Text("\(Constants.versionLabel) · open source, MIT licensed.")
                     }
                     .frame(maxWidth: .infinity)
                     .multilineTextAlignment(.center)

@@ -1,0 +1,111 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "NSBluetoothAlwaysUsageDescription": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LibreBase verbindet sich per Bluetooth mit deiner Qardio-Waage, um dein Gewicht auszulesen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LibreBase connects to your Qardio scale over Bluetooth to read your weight."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LibreBase se conecta a tu báscula Qardio por Bluetooth para leer tu peso."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LibreBase se connecte à votre balance Qardio en Bluetooth pour lire votre poids."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LibreBase maakt via Bluetooth verbinding met je Qardio-weegschaal om je gewicht uit te lezen."
+          }
+        }
+      }
+    },
+    "NSHealthShareUsageDescription": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LibreBase liest deine Größe aus Apple Health, um deinen BMI zu berechnen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LibreBase reads your height from Apple Health to calculate your BMI."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LibreBase lee tu altura de Apple Salud para calcular tu IMC."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LibreBase lit votre taille dans Apple Santé pour calculer votre IMC."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LibreBase leest je lengte uit Apple Gezondheid om je BMI te berekenen."
+          }
+        }
+      }
+    },
+    "NSHealthUpdateUsageDescription": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LibreBase speichert dein Gewicht und eine eingegebene Größe in Apple Health."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LibreBase saves your weight, and any height you enter, to Apple Health."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LibreBase guarda tu peso, y la altura que introduzcas, en Apple Salud."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LibreBase enregistre votre poids, et la taille que vous saisissez, dans Apple Santé."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LibreBase bewaart je gewicht, en een lengte die je invoert, in Apple Gezondheid."
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}
