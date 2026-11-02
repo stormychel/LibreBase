@@ -184,6 +184,14 @@ enum StandardScaleProfile {
             /// The assigned user index, on a successful Register New User.
             let userIndex: UInt8?
 
+            var requestName: String {
+                switch request {
+                case ControlPoint.registerNewUser: "register new user"
+                case ControlPoint.consent: "consent"
+                default: String(format: "op 0x%02x", request)
+                }
+            }
+
             var valueName: String {
                 switch value {
                 case 0x01: "success"

@@ -132,7 +132,7 @@ struct LibreBaseTests {
                 == Data([0xEA, 0x07, 10, 9, 7, 30, 15, 5, 0, 0]))
     }
 
-    @Test func userControlPointFrames() {
+    @Test func userControlPointFrames() throws {
         typealias ControlPoint = StandardScaleProfile.ControlPoint
         #expect(ControlPoint.register(consentCode: 1234) == Data([0x01, 0xD2, 0x04]))
         #expect(ControlPoint.consent(userIndex: 2, consentCode: 1234) == Data([0x02, 0x02, 0xD2, 0x04]))
@@ -140,7 +140,8 @@ struct LibreBaseTests {
                 == ControlPoint.Response(request: 0x01, succeeded: true, value: 0x01, userIndex: 2))
         #expect(ControlPoint.parseResponse(Data([0x20, 0x02, 0x05]))
                 == ControlPoint.Response(request: 0x02, succeeded: false, value: 0x05, userIndex: nil))
-        #expect(ControlPoint.parseResponse(Data([0x20, 0x01, 0x04]))?.valueName == "operation failed")
+        let refused = try #require(ControlPoint.parseResponse(Data([0x20, 0x01, 0x04])))
+        #expect(refused.requestName == "register new user" && refused.valueName == "operation failed")
         #expect(ControlPoint.parseResponse(Data([0x01, 0x02])) == nil)
     }
 
@@ -163,6 +164,9 @@ struct LibreBaseTests {
         let weight = try #require(StandardScaleProfile.parseWeight(frame, resolution: x))
         #expect(abs(weight.kg - 100.3) < 0.0001)
         #expect(weight.userIndex == 2)
+        // Imperial at 0.1 lb/unit: 1500 → 150 lb.
+        let lb = try #require(StandardScaleProfile.parseWeight(Data([0x01, 0xDC, 0x05]), resolution: x))
+        #expect(abs(lb.kg - 150 * 0.45359237) < 0.0001)
         // Water mass at the same resolution: 714 × 0.05 = 35.7 kg of 71.4 kg.
         let water = Data([0x00, 0x01, 0xFF, 0xFF, 0xCA, 0x02])
         #expect(StandardScaleProfile.parseBodyComposition(water, weightKg: 71.4, resolution: x)

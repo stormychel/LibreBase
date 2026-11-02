@@ -77,6 +77,7 @@ final class ScaleClient: NSObject, ObservableObject {
     private var weightResolution: StandardScaleProfile.MassResolution?
     private var compositionResolution: StandardScaleProfile.MassResolution?
     private var awaitingWeightFeature = false
+    private var didRetryWeightFeature = false
     private var pendingWeightFrames: [Data] = []
     /// Body Composition arrives as its own indication(s), before or after the
     /// weight. The raw frames are kept — water is sent as a mass and can only
@@ -403,8 +404,7 @@ final class ScaleClient: NSObject, ObservableObject {
     private func handleUserControlPoint(_ data: Data, from p: CBPeripheral) {
         typealias ControlPoint = StandardScaleProfile.ControlPoint
         guard let response = ControlPoint.parseResponse(data) else { return }
-        log("user control point: \(response.request == ControlPoint.registerNewUser ? "register" : "consent")"
-            + " → \(response.valueName)")
+        log("user control point: \(response.requestName) → \(response.valueName)")
         switch (response.request, response.succeeded) {
         case (ControlPoint.registerNewUser, true):
             guard let index = response.userIndex else { return }
@@ -424,7 +424,7 @@ final class ScaleClient: NSObject, ObservableObject {
         case (ControlPoint.registerNewUser, false) where response.value == ControlPoint.operationFailed:
             // Typically every user slot is taken, e.g. by profiles the Qardio
             // app created (#58).
-            consentFailed(reason: "Scale has no free user slot")
+            consentFailed(reason: "Scale refused a new user (user slots full?)")
         default:
             consentFailed()
         }
@@ -574,6 +574,11 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         finalizedWeightTimestamp = nil
         consentStarted = false
         didReregisterUser = false
+        weightResolution = nil
+        compositionResolution = nil
+        awaitingWeightFeature = false
+        didRetryWeightFeature = false
+        pendingWeightFrames.removeAll()
         // Recon: discover everything. Otherwise just the services we need.
         p.discoverServices(reconMode ? nil
             : [weightScaleService, bodyCompService, batteryService, deviceInfoService, qbService,
@@ -698,10 +703,20 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     func peripheral(_ p: CBPeripheral, didUpdateValueFor ch: CBCharacteristic, error: Error?) {
         guard error == nil, let data = ch.value else {
-            // Without the feature, fall back to the spec default rather than
-            // holding weight frames forever.
-            if ch.uuid == weightFeature { weightFeatureResolved(.standard, from: p) }
-            status = "Read error"
+            switch ch.uuid {
+            case weightFeature where !didRetryWeightFeature:
+                // The default resolution reads an X 10× too low: try once more.
+                didRetryWeightFeature = true
+                p.readValue(for: ch)
+            case weightFeature:
+                // Rather the spec default than weight frames held forever.
+                log("weight feature unreadable — decoding at the spec default")
+                weightFeatureResolved(.standard, from: p)
+            case bodyCompFeature:
+                break
+            default:
+                status = "Read error"
+            }
             return
         }
 
@@ -739,6 +754,10 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
             weightFeatureResolved(StandardScaleProfile.weightResolution(feature: data), from: p)
         case bodyCompFeature:
             compositionResolution = StandardScaleProfile.bodyCompositionResolution(feature: data)
+            // A weight decoded before this arrived used the default for water.
+            if sessionActive, let weightKg = lastReading?.weightKg {
+                lastReading?.composition = currentComposition(weightKg: weightKg)
+            }
         case weightMeasurement:
             parseWeight(data, from: p)
         case bodyCompMeasurement:
