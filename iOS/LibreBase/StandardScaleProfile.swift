@@ -19,6 +19,41 @@ enum StandardScaleProfile {
         let userIndex: UInt8?
     }
 
+    /// Mass per raw unit, as a scale advertises it in its Weight Scale Feature
+    /// (0x2A9E) or Body Composition Feature (0x2A9B). The X uses 0.05 kg, ten
+    /// times coarser than the spec's default.
+    struct MassResolution: Equatable {
+        let kgPerUnit: Double
+        let lbPerUnit: Double
+
+        /// "Not specified" in the feature: the measurement's own default.
+        static let standard = MassResolution(kgPerUnit: 0.005, lbPerUnit: 0.01)
+
+        /// Feature resolution values 1…7; 0 (not specified) and reserved values
+        /// fall back to `standard`.
+        static func fromFeatureValue(_ value: UInt32) -> MassResolution {
+            let table: [(Double, Double)] = [(0.5, 1), (0.2, 0.5), (0.1, 0.2), (0.05, 0.1),
+                                             (0.02, 0.05), (0.01, 0.02), (0.005, 0.01)]
+            guard (1...7).contains(value) else { return .standard }
+            let (kg, lb) = table[Int(value) - 1]
+            return MassResolution(kgPerUnit: kg, lbPerUnit: lb)
+        }
+    }
+
+    // MARK: - Feature characteristics (0x2A9E / 0x2A9B)
+
+    /// Weight Scale Feature: uint32, weight resolution in bits 3–6.
+    static func weightResolution(feature data: Data) -> MassResolution {
+        guard let value = u32(data) else { return .standard }
+        return .fromFeatureValue((value >> 3) & 0x0F)
+    }
+
+    /// Body Composition Feature: uint32, mass resolution in bits 11–14.
+    static func bodyCompositionResolution(feature data: Data) -> MassResolution {
+        guard let value = u32(data) else { return .standard }
+        return .fromFeatureValue((value >> 11) & 0x0F)
+    }
+
     /// GATT dates are Gregorian whatever calendar the phone is set to.
     static var gregorian: Calendar {
         var calendar = Calendar(identifier: .gregorian)
@@ -29,11 +64,12 @@ enum StandardScaleProfile {
     // MARK: - Weight Measurement (0x2A9D)
 
     /// flags(1) weight(2) [timestamp(7)] [user(1)] [bmi(2) height(2)]
-    static func parseWeight(_ data: Data, calendar: Calendar = gregorian) -> Weight? {
+    static func parseWeight(_ data: Data, resolution: MassResolution = .standard,
+                            calendar: Calendar = gregorian) -> Weight? {
         let b = [UInt8](data)
         guard b.count >= 3 else { return nil }
         let flags = b[0]
-        let kg = mass(raw: u16(b, 1), imperial: flags & 0x01 != 0)
+        let kg = mass(raw: u16(b, 1), imperial: flags & 0x01 != 0, resolution: resolution)
         var offset = 3
         var timestamp: Date?
         if flags & 0x02 != 0 {
@@ -56,7 +92,8 @@ enum StandardScaleProfile {
     /// [impedance(2)] [weight(2)] [height(2)]. Water arrives as a mass, so it
     /// needs a weight to become a percentage — the frame's own if present, else
     /// `weightKg` from the Weight Measurement.
-    static func parseBodyComposition(_ data: Data, weightKg: Double? = nil) -> BodyComposition? {
+    static func parseBodyComposition(_ data: Data, weightKg: Double? = nil,
+                                     resolution: MassResolution = .standard) -> BodyComposition? {
         let b = [UInt8](data)
         guard b.count >= 4 else { return nil }
         let flags = u16(b, 0)
@@ -76,19 +113,21 @@ enum StandardScaleProfile {
         let fatRaw = u16(b, 2)
         if fatRaw != 0xFFFF { composition.fatPct = within(Double(fatRaw) * 0.1, 3...60) }
         if let muscle = fields[4] { composition.musclePct = within(Double(muscle) * 0.1, 10...70) }
-        let weight = fields[10].map { mass(raw: $0, imperial: imperial) } ?? weightKg
+        let weight = fields[10].map { mass(raw: $0, imperial: imperial, resolution: resolution) } ?? weightKg
         if let water = fields[8], let weight, weight > 0 {
-            composition.waterPct = within(mass(raw: water, imperial: imperial) / weight * 100, 20...80)
+            let waterKg = mass(raw: water, imperial: imperial, resolution: resolution)
+            composition.waterPct = within(waterKg / weight * 100, 20...80)
         }
         return composition.isEmpty ? nil : composition
     }
 
     /// A measurement may be split over several indications (multiple-packet
     /// flag); later frames fill in what earlier ones lacked.
-    static func parseBodyComposition(frames: [Data], weightKg: Double?) -> BodyComposition? {
+    static func parseBodyComposition(frames: [Data], weightKg: Double?,
+                                     resolution: MassResolution = .standard) -> BodyComposition? {
         var merged = BodyComposition()
         for frame in frames {
-            guard let part = parseBodyComposition(frame, weightKg: weightKg) else { continue }
+            guard let part = parseBodyComposition(frame, weightKg: weightKg, resolution: resolution) else { continue }
             merged.fatPct = part.fatPct ?? merged.fatPct
             merged.waterPct = part.waterPct ?? merged.waterPct
             merged.musclePct = part.musclePct ?? merged.musclePct
@@ -126,6 +165,8 @@ enum StandardScaleProfile {
         static let consent: UInt8 = 0x02
         static let responseCode: UInt8 = 0x20
         static let success: UInt8 = 0x01
+        static let operationFailed: UInt8 = 0x04
+        static let userNotAuthorized: UInt8 = 0x05
 
         static func register(consentCode: UInt16) -> Data {
             Data([registerNewUser, UInt8(consentCode & 0xFF), UInt8(consentCode >> 8)])
@@ -138,8 +179,21 @@ enum StandardScaleProfile {
         struct Response: Equatable {
             let request: UInt8
             let succeeded: Bool
+            /// The raw response value (0x01 success … 0x05 user not authorized).
+            let value: UInt8
             /// The assigned user index, on a successful Register New User.
             let userIndex: UInt8?
+
+            var valueName: String {
+                switch value {
+                case 0x01: "success"
+                case 0x02: "op code not supported"
+                case 0x03: "invalid parameter"
+                case 0x04: "operation failed"
+                case 0x05: "user not authorized"
+                default: String(format: "0x%02x", value)
+                }
+            }
         }
 
         /// 0x20, request op code, response value, [parameter]
@@ -147,7 +201,7 @@ enum StandardScaleProfile {
             let b = [UInt8](data)
             guard b.count >= 3, b[0] == responseCode else { return nil }
             let ok = b[2] == success
-            return Response(request: b[1], succeeded: ok,
+            return Response(request: b[1], succeeded: ok, value: b[2],
                             userIndex: ok && b[1] == registerNewUser && b.count >= 4 ? b[3] : nil)
         }
     }
@@ -156,9 +210,16 @@ enum StandardScaleProfile {
 
     private static func u16(_ b: [UInt8], _ i: Int) -> UInt16 { UInt16(b[i]) | (UInt16(b[i + 1]) << 8) }
 
-    /// SI: 0.005 kg/unit. Imperial: 0.01 lb/unit → kg.
-    private static func mass(raw: UInt16, imperial: Bool) -> Double {
-        imperial ? Double(raw) * 0.01 * 0.45359237 : Double(raw) * 0.005
+    private static func u32(_ data: Data) -> UInt32? {
+        let b = [UInt8](data)
+        guard b.count >= 4 else { return nil }
+        return UInt32(b[0]) | UInt32(b[1]) << 8 | UInt32(b[2]) << 16 | UInt32(b[3]) << 24
+    }
+
+    /// Raw units → kg, at the resolution the scale advertises (imperial frames
+    /// are in pounds).
+    private static func mass(raw: UInt16, imperial: Bool, resolution: MassResolution) -> Double {
+        imperial ? Double(raw) * resolution.lbPerUnit * 0.45359237 : Double(raw) * resolution.kgPerUnit
     }
 
     private static func within(_ value: Double, _ range: ClosedRange<Double>) -> Double? {

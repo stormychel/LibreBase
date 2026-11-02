@@ -148,13 +148,15 @@ The X (`Model Number String` = `BX00`) exposes none of the B100 vendor service. 
 
 | Service | Characteristics |
 |---------|-----------------|
-| Weight Scale `181D` | `2A9D` measurement [notify,indicate], `2A9E` feature (`27 00 00 00`: timestamp, multiple users, BMI) |
-| Body Composition `181B` | `2A9C` measurement [notify,indicate], `2A9B` feature |
+| Weight Scale `181D` | `2A9D` measurement [notify,indicate], `2A9E` feature (`27 00 00 00`: timestamp, multiple users, BMI, weight resolution **0.05 kg**) |
+| Body Composition `181B` | `2A9C` measurement [notify,indicate], `2A9B` feature (`ff 23 00 00`: mass resolution 0.05 kg) |
 | User Data `181C` | `2A8C` gender, `2A80` age, `2A85` date of birth, `2A8E` height, Database Change Increment, **User Control Point** `2A9F`, `2AFF` |
 | Current Time `1805` | `2A2B` [read,write,notify] — reads 1970 on a scale the Qardio app never set |
 | Vendor | `FFE1`/`FFE2`, `FFF1`/`FFF2`, service `8018` (`8020`–`8023`) — all-zero reads, purpose unknown |
 
 Two captures show the scale connecting and then staying silent, with every User Data field reading `ff` (no user selected). LibreBase therefore writes the current time, then runs the User Data consent flow on the User Control Point — **Register New User** (`01` + a consent code; the scale answers `20 01 01 <index>`) once per scale, then **Consent** (`02 <index> <code>`) on every connection — before expecting `2A9D`/`2A9C` indications. This is implemented from the spec and the captures; whether the X accepts it is unverified. If you have an X, a "Report your scale" capture from a build with this flow shows the control-point responses.
+
+Masses are decoded at the resolution the feature characteristics advertise, not the spec's 0.005 kg default — the X's raw weight is in 0.05 kg units, so the default reads 10× too low (#54). If the scale refuses Register New User with "operation failed", its user slots are most likely all taken, e.g. by profiles the Qardio app created (#58).
 
 ### Final measurement JSON
 

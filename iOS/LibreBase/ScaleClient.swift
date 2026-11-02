@@ -70,6 +70,14 @@ final class ScaleClient: NSObject, ObservableObject {
     private var qardioMeasurementChar: CBCharacteristic?
     private var bodyCompChar: CBCharacteristic?
     private var userControlPointChar: CBCharacteristic?
+    /// Mass per raw unit from the Weight Scale / Body Composition Feature reads.
+    /// While the weight one is outstanding, weight frames wait in
+    /// `pendingWeightFrames`: decoded at the spec default, the X's would read
+    /// 10× too low (#54).
+    private var weightResolution: StandardScaleProfile.MassResolution?
+    private var compositionResolution: StandardScaleProfile.MassResolution?
+    private var awaitingWeightFeature = false
+    private var pendingWeightFrames: [Data] = []
     /// Body Composition arrives as its own indication(s), before or after the
     /// weight. The raw frames are kept — water is sent as a mass and can only
     /// become a percentage once the weight is known.
@@ -93,8 +101,10 @@ final class ScaleClient: NSObject, ObservableObject {
     // Standard SIG services / characteristics
     private let weightScaleService  = CBUUID(string: "181D")
     private let weightMeasurement   = CBUUID(string: "2A9D")
+    private let weightFeature       = CBUUID(string: "2A9E")
     private let bodyCompService     = CBUUID(string: "181B")
     private let bodyCompMeasurement = CBUUID(string: "2A9C")
+    private let bodyCompFeature     = CBUUID(string: "2A9B")
     private let batteryService      = CBUUID(string: "180F")
     private let batteryLevel        = CBUUID(string: "2A19")
     private let deviceInfoService   = CBUUID(string: "180A")
@@ -275,7 +285,12 @@ final class ScaleClient: NSObject, ObservableObject {
     // MARK: - Parsers (standard Weight Measurement 0x2A9D / Body Composition 0x2A9C)
 
     private func parseWeight(_ data: Data, from p: CBPeripheral) {
-        guard let weight = StandardScaleProfile.parseWeight(data) else { return }
+        if awaitingWeightFeature {
+            pendingWeightFrames.append(data)
+            return
+        }
+        guard let weight = StandardScaleProfile.parseWeight(data, resolution: weightResolution ?? .standard)
+        else { return }
 
         // On a shared scale, a weigh-in attributed to a user other than the one
         // this phone registered must not land in this phone's Health record.
@@ -330,7 +345,17 @@ final class ScaleClient: NSObject, ObservableObject {
     private func currentComposition(weightKg: Double) -> BodyComposition? {
         let cutoff = Date().addingTimeInterval(-10)
         compositionFrames.removeAll { $0.receivedAt < cutoff }
-        return StandardScaleProfile.parseBodyComposition(frames: compositionFrames.map(\.data), weightKg: weightKg)
+        return StandardScaleProfile.parseBodyComposition(frames: compositionFrames.map(\.data), weightKg: weightKg,
+                                                         resolution: compositionResolution ?? .standard)
+    }
+
+    /// The Weight Scale Feature read finished (or failed): decode what waited.
+    private func weightFeatureResolved(_ resolution: StandardScaleProfile.MassResolution, from p: CBPeripheral) {
+        weightResolution = resolution
+        awaitingWeightFeature = false
+        let frames = pendingWeightFrames
+        pendingWeightFrames.removeAll()
+        for frame in frames { parseWeight(frame, from: p) }
     }
 
     /// A frame already saved with the weigh-in that just finished. Only for a
@@ -356,7 +381,10 @@ final class ScaleClient: NSObject, ObservableObject {
         status = "Setting up scale…"
         // Without an answer the scale would sit on "Setting up…" forever.
         consentTimeoutWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.consentFailed() }
+        let work = DispatchWorkItem { [weak self] in
+            self?.log("user control point: no response in 15 s")
+            self?.consentFailed()
+        }
         consentTimeoutWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: work)
         if let user = storedScaleUser(for: p) {
@@ -375,6 +403,8 @@ final class ScaleClient: NSObject, ObservableObject {
     private func handleUserControlPoint(_ data: Data, from p: CBPeripheral) {
         typealias ControlPoint = StandardScaleProfile.ControlPoint
         guard let response = ControlPoint.parseResponse(data) else { return }
+        log("user control point: \(response.request == ControlPoint.registerNewUser ? "register" : "consent")"
+            + " → \(response.valueName)")
         switch (response.request, response.succeeded) {
         case (ControlPoint.registerNewUser, true):
             guard let index = response.userIndex else { return }
@@ -391,14 +421,18 @@ final class ScaleClient: NSObject, ObservableObject {
             didReregisterUser = true
             UserDefaults.standard.removeObject(forKey: scaleUserKey(p))
             beginUserConsent(on: p)
+        case (ControlPoint.registerNewUser, false) where response.value == ControlPoint.operationFailed:
+            // Typically every user slot is taken, e.g. by profiles the Qardio
+            // app created (#58).
+            consentFailed(reason: "Scale has no free user slot")
         default:
             consentFailed()
         }
     }
 
-    private func consentFailed() {
+    private func consentFailed(reason: String = "Scale didn't accept this phone") {
         consentTimeoutWorkItem?.cancel()
-        status = "Scale didn't accept this phone — use “Report your scale” in Settings"
+        status = "\(reason) — use “Report your scale” in Settings"
     }
 
     private func scaleUserKey(_ p: CBPeripheral) -> String { "udsUser.\(p.identifier.uuidString)" }
@@ -564,6 +598,10 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         qardioMeasurementActive = false
         bodyCompChar = nil
         userControlPointChar = nil
+        weightResolution = nil
+        compositionResolution = nil
+        awaitingWeightFeature = false
+        pendingWeightFrames.removeAll()
         consentTimeoutWorkItem?.cancel()
         updateBatteryStatus(nil)
 
@@ -599,6 +637,11 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
             case weightMeasurement:
                 weightChar = ch
                 p.setNotifyValue(true, for: ch)
+            case weightFeature:
+                awaitingWeightFeature = ch.properties.contains(.read)
+                if awaitingWeightFeature { p.readValue(for: ch) }
+            case bodyCompFeature:
+                if ch.properties.contains(.read) { p.readValue(for: ch) }
             case bodyCompMeasurement:
                 // Supplements a weight reading; never marks the scale supported
                 // on its own.
@@ -655,6 +698,9 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     func peripheral(_ p: CBPeripheral, didUpdateValueFor ch: CBCharacteristic, error: Error?) {
         guard error == nil, let data = ch.value else {
+            // Without the feature, fall back to the spec default rather than
+            // holding weight frames forever.
+            if ch.uuid == weightFeature { weightFeatureResolved(.standard, from: p) }
             status = "Read error"
             return
         }
@@ -689,6 +735,10 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         }
 
         switch ch.uuid {
+        case weightFeature:
+            weightFeatureResolved(StandardScaleProfile.weightResolution(feature: data), from: p)
+        case bodyCompFeature:
+            compositionResolution = StandardScaleProfile.bodyCompositionResolution(feature: data)
         case weightMeasurement:
             parseWeight(data, from: p)
         case bodyCompMeasurement:

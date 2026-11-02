@@ -137,9 +137,35 @@ struct LibreBaseTests {
         #expect(ControlPoint.register(consentCode: 1234) == Data([0x01, 0xD2, 0x04]))
         #expect(ControlPoint.consent(userIndex: 2, consentCode: 1234) == Data([0x02, 0x02, 0xD2, 0x04]))
         #expect(ControlPoint.parseResponse(Data([0x20, 0x01, 0x01, 0x02]))
-                == ControlPoint.Response(request: 0x01, succeeded: true, userIndex: 2))
+                == ControlPoint.Response(request: 0x01, succeeded: true, value: 0x01, userIndex: 2))
         #expect(ControlPoint.parseResponse(Data([0x20, 0x02, 0x05]))
-                == ControlPoint.Response(request: 0x02, succeeded: false, userIndex: nil))
+                == ControlPoint.Response(request: 0x02, succeeded: false, value: 0x05, userIndex: nil))
+        #expect(ControlPoint.parseResponse(Data([0x20, 0x01, 0x04]))?.valueName == "operation failed")
         #expect(ControlPoint.parseResponse(Data([0x01, 0x02])) == nil)
+    }
+
+    // MARK: - Feature resolution (QardioBase X, issue #54)
+
+    @Test func readsMassResolutionFromFeatures() throws {
+        typealias Resolution = StandardScaleProfile.MassResolution
+        // The X's Weight Scale Feature 0x00000027: weight resolution 4 → 0.05 kg.
+        let x = StandardScaleProfile.weightResolution(feature: Data([0x27, 0x00, 0x00, 0x00]))
+        #expect(x == Resolution(kgPerUnit: 0.05, lbPerUnit: 0.1))
+        // Not specified, reserved or short: the spec default.
+        #expect(StandardScaleProfile.weightResolution(feature: Data([0x07, 0x00, 0x00, 0x00])) == .standard)
+        #expect(StandardScaleProfile.weightResolution(feature: Data([0x47, 0x00, 0x00, 0x00])) == .standard)
+        #expect(StandardScaleProfile.weightResolution(feature: Data([0x27])) == .standard)
+        // The X's Body Composition Feature 0x000023FF: mass resolution 4 → 0.05 kg.
+        #expect(StandardScaleProfile.bodyCompositionResolution(feature: Data([0xFF, 0x23, 0x00, 0x00])) == x)
+
+        // The weigh-in from #54's capture: 2006 × 0.05 kg = 100.3 kg, user 2.
+        let frame = Data([0x2E, 0xD6, 0x07, 0xEA, 0x07, 0x0A, 0x0F, 0x13, 0x36, 0x32, 0x02, 0x5B, 0x01, 0xAA, 0x00])
+        let weight = try #require(StandardScaleProfile.parseWeight(frame, resolution: x))
+        #expect(abs(weight.kg - 100.3) < 0.0001)
+        #expect(weight.userIndex == 2)
+        // Water mass at the same resolution: 714 × 0.05 = 35.7 kg of 71.4 kg.
+        let water = Data([0x00, 0x01, 0xFF, 0xFF, 0xCA, 0x02])
+        #expect(StandardScaleProfile.parseBodyComposition(water, weightKg: 71.4, resolution: x)
+                == BodyComposition(waterPct: 50))
     }
 }
