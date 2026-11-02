@@ -713,7 +713,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
                 log("weight feature unreadable — decoding at the spec default")
                 weightFeatureResolved(.standard, from: p)
             case bodyCompFeature:
-                break
+                log("body composition feature unreadable — decoding at the spec default")
             default:
                 status = "Read error"
             }
