@@ -13,6 +13,14 @@ import Foundation
 struct ScaleReading {
     let weightKg: Double
     let timestamp: Date
+    /// Only set by scales that report it (QardioBase result JSON).
+    var composition: BodyComposition?
+    var scaleUser: ScaleUser?
+
+    /// Physiologically plausible adult weight range, also rejects SFLOAT/NaN junk.
+    static func isPlausibleWeight(_ kg: Double) -> Bool {
+        kg.isFinite && kg >= 2 && kg <= 400
+    }
 }
 
 /// Connects to a Qardio (Base) smart scale over Bluetooth LE, reads weight, and
@@ -24,18 +32,26 @@ struct ScaleReading {
 ///   - Body Composition    0x181B / Body Composition   0x2A9C
 ///   - Battery             0x180F / Battery Level       0x2A19
 ///   - Device Information   0x180A
+/// plus, for scales that gate measurements behind them (QardioBase X):
+///   - User Data           0x181C / User Control Point  0x2A9F
+///   - Current Time        0x1805 / Current Time        0x2A2B
 ///
 /// If the scale turns out to speak a custom profile, `reconMode` (on by default)
 /// discovers *every* service/characteristic and logs every payload as hex to
 /// `reconLog` — that first real-device run is the README's Phase-1 recon and
 /// produces the bytes needed to finalize the parser.
 final class ScaleClient: NSObject, ObservableObject {
+    static let shared = ScaleClient()
+
     // MARK: - UI state
-    @Published var status = "Searching for scale…"
+    @Published var status = String(localized: "Searching for scale…")
     @Published var lastReading: ScaleReading?
+    /// Weigh-ins a User Data scale replayed without a user (index 0xFF), e.g.
+    /// ones taken before this phone first consented (#61). The user decides.
+    @Published var unclaimedReadings: [ScaleReading] = []
     @Published var isConnected = false
     @Published var batteryLevelPct: Int?
-    @Published var batteryStatusLine = "Battery: unavailable"
+    @Published var batteryStatusLine = String(localized: "Battery: unavailable")
 
     // MARK: - Recon (Phase 1)
     /// When true, discover ALL services/characteristics and log every payload as
@@ -46,6 +62,17 @@ final class ScaleClient: NSObject, ObservableObject {
 
     /// Fires once per weigh-in when the scale stops sending updates.
     var onFinalReading: ((ScaleReading) -> Void)?
+    /// Written to a User Data scale (QardioBase X) after each consent, so its
+    /// body composition uses the real height, age and sex (#60).
+    var userProfile: StandardScaleProfile.UserProfile? {
+        didSet {
+            // Set after consent (Health answered late, or height edited): write now.
+            guard userProfile != oldValue, isConsented, let peripheral else { return }
+            writeUserProfile(to: peripheral)
+        }
+    }
+    /// Consent succeeded on the current connection.
+    private var isConsented = false
 
     // MARK: - BLE
     /// Created on demand by `start()` rather than in `init`: building the central
@@ -57,15 +84,60 @@ final class ScaleClient: NSObject, ObservableObject {
     private var batteryChar: CBCharacteristic?
     private var qardioEngineeringChar: CBCharacteristic?
     private var qardioMeasurementChar: CBCharacteristic?
+    private var bodyCompChar: CBCharacteristic?
+    private var userControlPointChar: CBCharacteristic?
+    /// Writable User Data characteristics (height, date of birth, age, gender).
+    private var userDataChars: [CBUUID: CBCharacteristic] = [:]
+    /// Mass per raw unit from the Weight Scale / Body Composition Feature reads.
+    /// While the weight one is outstanding, weight frames wait in
+    /// `pendingWeightFrames`: decoded at the spec default, the X's would read
+    /// 10× too low (#54).
+    private var weightResolution: StandardScaleProfile.MassResolution?
+    private var compositionResolution: StandardScaleProfile.MassResolution?
+    private var awaitingWeightFeature = false
+    private var didRetryWeightFeature = false
+    private var pendingWeightFrames: [Data] = []
+    /// Body Composition arrives as its own indication(s), before or after the
+    /// weight. The raw frames are kept — water is sent as a mass and can only
+    /// become a percentage once the weight is known.
+    private var compositionFrames: [(data: Data, receivedAt: Date)] = []
+    /// Frames already saved with a weigh-in, so a retransmission isn't taken
+    /// for part of the next one.
+    private var consumedCompositionFrames: Set<Data> = []
+    private var consumedCompositionAt = Date.distantPast
+    /// Set after a Body Composition frame that awaits a continuation: whether
+    /// that next frame is kept (true) or dropped with its head (false).
+    private var continuationAccepted: Bool?
+    /// The X splits composition over two frames its own way (#59).
+    private var compositionDialect: StandardScaleProfile.Dialect = .standard
+    /// Advertised name, for when the GAP name isn't cached yet.
+    private var discoveredName: String?
+    /// One consent attempt per connection, plus at most one re-registration.
+    private var consentStarted = false
+    private var didReregisterUser = false
+    private var consentTimeoutWorkItem: DispatchWorkItem?
+    /// The last standard-profile weight frame that was finalized — lets a second
+    /// weigh-in on the same connection through while ignoring retransmissions.
+    private var finalizedWeightFrame: Data?
+    private var finalizedWeightTimestamp: Date?
+    /// Services still waiting on characteristic discovery, so "no supported
+    /// weight service" is decided once at the end instead of per service.
+    private var servicesAwaitingCharacteristics = 0
 
     // Standard SIG services / characteristics
     private let weightScaleService  = CBUUID(string: "181D")
     private let weightMeasurement   = CBUUID(string: "2A9D")
+    private let weightFeature       = CBUUID(string: "2A9E")
     private let bodyCompService     = CBUUID(string: "181B")
     private let bodyCompMeasurement = CBUUID(string: "2A9C")
+    private let bodyCompFeature     = CBUUID(string: "2A9B")
     private let batteryService      = CBUUID(string: "180F")
     private let batteryLevel        = CBUUID(string: "2A19")
     private let deviceInfoService   = CBUUID(string: "180A")
+    private let userDataService     = CBUUID(string: "181C")
+    private let userControlPoint    = CBUUID(string: "2A9F")
+    private let currentTimeService  = CBUUID(string: "1805")
+    private let currentTime         = CBUUID(string: "2A2B")
 
     // QardioBase B100 custom profile (discovered via recon, 2026-06-02).
     // The reliable weight source is the final-result JSON on `qbResult`, gated on
@@ -82,7 +154,9 @@ final class ScaleClient: NSObject, ObservableObject {
 
     // Debounce: a weigh-in may stream several frames before stabilizing.
     private var completionWorkItem: DispatchWorkItem?
-    private let completionDebounceSeconds: TimeInterval = 1.5
+    /// Longer when Body Composition is subscribed, to leave room for its frame
+    /// to follow the weight before the reading is finalized and saved.
+    private var completionDebounceSeconds: TimeInterval { bodyCompChar == nil ? 1.5 : 3 }
     private var sessionActive = false
     private var qardioMeasurementActive = false
     /// Set true only when we drop the link on purpose (e.g. Retry). The resulting
@@ -94,9 +168,26 @@ final class ScaleClient: NSObject, ObservableObject {
     /// both the `00 00 05 06` marker and the `control = 06` done state, so it can
     /// decode more than once per session. Reset when a new measurement starts.
     private var didFinalizeSession = false
+    /// One retry per weigh-in for a result read that fails right after "done".
+    /// Cancelled whenever the connection or weigh-in changes, so it can't read
+    /// a later session's result.
+    private var didRetryResultRead = false
+    private var resultRetryWorkItem: DispatchWorkItem?
 
     // Connect timeout
     private var connectTimeoutWorkItem: DispatchWorkItem?
+
+    // Background weigh-ins (#19). With the `bluetooth-central` background mode a
+    // pending connect outlives the app being suspended, and state restoration
+    // lets iOS relaunch the app for it after the system has terminated it.
+    private let restoreIdentifier = "com.michelstorms.LibreBase.scale"
+    private let knownScaleKey = "knownScaleIdentifier"
+    /// True between `willRestoreState` and the first `.poweredOn`: the restored
+    /// peripheral must be picked up as-is, not torn down by `startConnect`.
+    private var restoredFromBackground = false
+    /// Set when a pending connect is asked for while a deliberate teardown is
+    /// still in flight; honoured once that teardown's disconnect arrives.
+    private var rearmAfterTeardown = false
 
     // MARK: - Public API
 
@@ -107,8 +198,33 @@ final class ScaleClient: NSObject, ObservableObject {
     /// `.poweredOn`, `centralManagerDidUpdateState` kicks off the first connect.
     func start() {
         if central == nil {
-            central = CBCentralManager(delegate: self, queue: .main)
+            central = CBCentralManager(delegate: self, queue: .main,
+                                       options: [CBCentralManagerOptionRestoreIdentifierKey: restoreIdentifier])
         }
+    }
+
+    /// Queue a connection request to the scale we last used. CoreBluetooth keeps
+    /// it pending with no timeout — also while the app is suspended — and
+    /// completes it the moment the scale wakes on a step-on. Scanning can't do
+    /// this in the background: iOS only scans for advertised service UUIDs there,
+    /// and the QardioBase advertises none.
+    func armPendingConnect() {
+        guard let central, central.state == .poweredOn, !isConnected else { return }
+        guard let p = peripheral ?? knownPeripheral(in: central) else { return }
+        peripheral = p
+        p.delegate = self
+        // A connect issued while Retry's cancel is still completing could be
+        // swallowed by it; wait for didDisconnectPeripheral instead.
+        if intentionalDisconnect, p.state == .disconnecting {
+            rearmAfterTeardown = true
+            return
+        }
+        central.connect(p, options: nil)
+    }
+
+    private func knownPeripheral(in central: CBCentralManager) -> CBPeripheral? {
+        guard let id = UserDefaults.standard.string(forKey: knownScaleKey).flatMap(UUID.init) else { return nil }
+        return central.retrievePeripherals(withIdentifiers: [id]).first
     }
 
     /// Populate a believable weigh-in for App Store screenshots (see
@@ -117,8 +233,8 @@ final class ScaleClient: NSObject, ObservableObject {
     func loadDemoReading() {
         isConnected = true
         batteryLevelPct = 84
-        batteryStatusLine = "Battery: 84%"
-        status = "Weigh-in complete"
+        batteryStatusLine = String(localized: "Battery: 84%")
+        status = String(localized: "Weigh-in complete")
         var components = DateComponents()
         components.year = 2026; components.month = 6; components.day = 1
         components.hour = 9; components.minute = 41
@@ -134,13 +250,13 @@ final class ScaleClient: NSObject, ObservableObject {
     func resumeScanning() {
         guard let central, central.state == .poweredOn, !isConnected else { return }
         central.scanForPeripherals(withServices: nil, options: nil)
-        if lastReading == nil { status = "Searching… step on the scale to connect" }
+        if lastReading == nil { status = String(localized: "Searching… step on the scale to connect") }
     }
 
     /// Begin scanning/connecting to the scale. Call on app start or on Retry.
     func startConnect(timeout: TimeInterval = 30) {
         guard let central, central.state == .poweredOn else {
-            status = "Bluetooth unavailable"
+            status = String(localized: "Bluetooth unavailable")
             return
         }
 
@@ -156,18 +272,26 @@ final class ScaleClient: NSObject, ObservableObject {
         // Drop any pending auto-reconnect so we don't end up with two connection
         // attempts to the same peripheral when the user taps Retry. Mark it
         // intentional so didDisconnectPeripheral doesn't immediately re-queue it.
+        let hadPeripheral = peripheral != nil
+        // This attempt owns the connection now; drop any deferred re-arm.
+        rearmAfterTeardown = false
         if let peripheral {
             intentionalDisconnect = true
             central.cancelPeripheralConnection(peripheral)
         }
         if reconMode { reconLog.removeAll() }
 
-        status = "Searching for scale…"
+        status = String(localized: "Searching for scale…")
         central.stopScan()
         // Scan unfiltered: the QardioBase does not advertise its vendor service
         // UUID, so a service-filtered scan never surfaces it. We match by name
         // hint / advertised standard service in didDiscover instead.
         central.scanForPeripherals(withServices: nil, options: nil)
+        // Fresh launch with a scale we already know: also queue a pending connect,
+        // so a weigh-in is caught even if the app is backgrounded before the scan
+        // finds the scale. (Not after a Retry — that just cancelled this very
+        // request and relies on the scan above.)
+        if !hadPeripheral { armPendingConnect() }
 
         let work = DispatchWorkItem { [weak self] in
             guard let self = self, !self.isConnected else { return }
@@ -177,8 +301,8 @@ final class ScaleClient: NSObject, ObservableObject {
             // fires and we connect — no manual Retry needed. We only nudge the
             // status so the screen explains what to do.
             self.status = self.peripheral == nil
-                ? "Searching… step on the scale to connect"
-                : "Step on the scale to wake it…"
+                ? String(localized: "Searching… step on the scale to connect")
+                : String(localized: "Step on the scale to wake it…")
         }
         connectTimeoutWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: work)
@@ -189,24 +313,23 @@ final class ScaleClient: NSObject, ObservableObject {
     private func updateBatteryStatus(_ level: Int?) {
         guard let level = level else {
             batteryLevelPct = nil
-            batteryStatusLine = "Battery: unavailable"
+            batteryStatusLine = String(localized: "Battery: unavailable")
             return
         }
         batteryLevelPct = level
         if level <= 10 {
-            batteryStatusLine = "Battery: \(level)% (Critical)"
+            batteryStatusLine = String(localized: "Battery: \(level)% (Critical)")
         } else if level <= 20 {
-            batteryStatusLine = "Battery: \(level)% (Low)"
+            batteryStatusLine = String(localized: "Battery: \(level)% (Low)")
         } else {
-            batteryStatusLine = "Battery: \(level)%"
+            batteryStatusLine = String(localized: "Battery: \(level)%")
         }
     }
 
     // MARK: - Validation
 
-    /// Physiologically plausible adult weight range, also rejects SFLOAT/NaN junk.
     private func isValidWeight(_ kg: Double) -> Bool {
-        kg.isFinite && kg >= 2 && kg <= 400
+        ScaleReading.isPlausibleWeight(kg)
     }
 
     // MARK: - Finalize
@@ -222,41 +345,264 @@ final class ScaleClient: NSObject, ObservableObject {
         guard sessionActive, let reading = lastReading else { return }
         guard isValidWeight(reading.weightKg) else {
             sessionActive = false
-            status = "Measurement invalid — please step on the scale again."
+            compositionFrames.removeAll()
+            continuationAccepted = nil
+            status = String(localized: "Measurement invalid — please step on the scale again.")
             return
         }
         sessionActive = false
         didFinalizeSession = true
-        status = "Weigh-in complete"
+        consumedCompositionFrames = Set(compositionFrames.map(\.data))
+        consumedCompositionAt = Date()
+        compositionFrames.removeAll()
+        continuationAccepted = nil
+        status = String(localized: "Weigh-in complete")
         onFinalReading?(reading)
     }
 
-    // MARK: - Parser (standard Weight Measurement 0x2A9D)
+    // MARK: - Parsers (standard Weight Measurement 0x2A9D / Body Composition 0x2A9C)
 
-    private func parseWeight(_ data: Data) {
-        let b = [UInt8](data)
-        guard b.count >= 3 else { return }
+    private func parseWeight(_ data: Data, from p: CBPeripheral) {
+        if awaitingWeightFeature {
+            pendingWeightFrames.append(data)
+            return
+        }
+        guard let weight = StandardScaleProfile.parseWeight(data, resolution: weightResolution ?? .standard)
+        else { return }
 
-        let flags = b[0]
-        let isImperial = (flags & 0x01) != 0
+        // Not attributed to anyone: possibly this phone's owner, before consent.
+        // Gated on the User Control Point, not on a stored user: a scale that
+        // refused registration may still replay, and those mustn't be saved.
+        if weight.userIndex == StandardScaleProfile.unknownUser, userControlPointChar != nil {
+            offerUnclaimed(weight)
+            return
+        }
 
-        let rawWeight = UInt16(b[1]) | (UInt16(b[2]) << 8)
-        // SI: 0.005 kg/unit. Imperial: 0.01 lb/unit → convert to kg.
-        let weightKg = isImperial
-            ? Double(rawWeight) * 0.01 * 0.45359237
-            : Double(rawWeight) * 0.005
+        // On a shared scale, a weigh-in attributed to a user other than the one
+        // this phone registered must not land in this phone's Health record.
+        if isForAnotherScaleUser(weight.userIndex, on: p) {
+            compositionFrames.removeAll()
+            continuationAccepted = nil
+            status = String(localized: "Weigh-in for another scale user — not saved")
+            return
+        }
+
+        // The scale stays connected between weigh-ins. Finalizing needs a quiet
+        // spell, so a frame that differs from the one already saved is a new
+        // weigh-in; an identical one is a retransmission. (A second weigh-in
+        // with byte-identical weight and no timestamp is indistinguishable from
+        // a retransmission and is not recorded.)
+        // A frame carrying the same scale timestamp as the saved one belongs to
+        // that same measurement, whatever else changed in it.
+        let sameMeasurement = data == finalizedWeightFrame
+            || (weight.timestamp != nil && weight.timestamp == finalizedWeightTimestamp)
+        if didFinalizeSession, !sameMeasurement { didFinalizeSession = false }
+        guard !didFinalizeSession else { return }
 
         // Note: the standard payload may carry a BMI field (flag 0x08), but it is
         // derived from a height stored on the scale that can only be set via the
         // (discontinued) Qardio app. We ignore it and compute BMI in-app instead.
-        let reading = ScaleReading(weightKg: weightKg, timestamp: Date())
-        DispatchQueue.main.async {
-            guard !self.didFinalizeSession else { return }
-            self.lastReading = reading
-            self.sessionActive = true
-            self.status = "Measuring…"
-            self.scheduleFinalize()
+        // Trust the scale's clock only when it is recent: an unset one reads 1970.
+        let now = Date()
+        let timestamp = weight.timestamp.flatMap {
+            (now.addingTimeInterval(-7 * 86_400)...now.addingTimeInterval(300)).contains($0) ? $0 : nil
+        } ?? now
+        finalizedWeightFrame = data
+        finalizedWeightTimestamp = weight.timestamp
+        lastReading = ScaleReading(weightKg: weight.kg, timestamp: timestamp,
+                                   composition: currentComposition(weightKg: weight.kg))
+        sessionActive = true
+        status = String(localized: "Measuring…")
+        scheduleFinalize()
+    }
+
+    private func parseBodyComposition(_ data: Data, from p: CBPeripheral) {
+        // A flagless continuation (#59) has no user index of its own: it shares
+        // the fate of the frame it continues. A frame that is itself a head
+        // (e.g. a retransmission) isn't one.
+        if let accepted = continuationAccepted,
+           !StandardScaleProfile.awaitsContinuation(data, dialect: compositionDialect) {
+            continuationAccepted = nil
+            guard accepted else { return }
+        } else {
+            // A truncated multiple-packet head is malformed for a spec scale: it
+            // is the X's split, whatever the scale is called.
+            if compositionDialect == .standard, StandardScaleProfile.awaitsContinuation(data, dialect: .qardioX) {
+                log("body composition: X-style split frame — using the QardioBase X layout")
+                compositionDialect = .qardioX
+            }
+            let compositionUser = StandardScaleProfile.bodyCompositionUserIndex(data)
+            // An unattributed replay's composition must not join a live weigh-in (#61).
+            let unattributedReplay = compositionUser == StandardScaleProfile.unknownUser && userControlPointChar != nil
+            let accepted = !unattributedReplay
+                && !isForAnotherScaleUser(compositionUser, on: p)
+                && !isRetransmittedComposition(data)
+            if StandardScaleProfile.awaitsContinuation(data, dialect: compositionDialect) {
+                continuationAccepted = accepted
+            }
+            guard accepted else { return }
         }
+        compositionFrames.append((data, Date()))
+        if sessionActive, let weightKg = lastReading?.weightKg {
+            lastReading?.composition = currentComposition(weightKg: weightKg)
+            scheduleFinalize()
+        }
+    }
+
+    /// Keys of unattributed weigh-ins already offered and answered, so a scale
+    /// that replays them on every connection doesn't ask again.
+    static let handledUnclaimedKey = "handledUnclaimedWeighIns"
+
+    static func unclaimedKey(_ reading: ScaleReading) -> String {
+        unclaimedKey(kg: reading.weightKg, timestamp: reading.timestamp)
+    }
+
+    static func unclaimedKey(kg: Double, timestamp: Date) -> String {
+        "\(Int((kg * 100).rounded()))@\(Int(timestamp.timeIntervalSince1970))"
+    }
+
+    private func offerUnclaimed(_ weight: StandardScaleProfile.Weight) {
+        // Without the scale's own clock there's no telling when it was taken.
+        guard isValidWeight(weight.kg), let timestamp = weight.timestamp,
+              timestamp > Date(timeIntervalSince1970: 1_577_836_800), timestamp < Date().addingTimeInterval(300)
+        else { return }
+        let key = Self.unclaimedKey(kg: weight.kg, timestamp: timestamp)
+        let handled = UserDefaults.standard.stringArray(forKey: Self.handledUnclaimedKey) ?? []
+        guard !handled.contains(key),
+              !unclaimedReadings.contains(where: { Self.unclaimedKey(kg: $0.weightKg, timestamp: $0.timestamp) == key })
+        else { return }
+        log("unattributed weigh-in \(weight.kg) kg at \(timestamp): offered to claim")
+        unclaimedReadings.append(ScaleReading(weightKg: weight.kg, timestamp: timestamp))
+        unclaimedReadings.sort { $0.timestamp < $1.timestamp }
+    }
+
+    /// The user claimed or dismissed an unattributed weigh-in: never offer it again.
+    func resolveUnclaimed(_ reading: ScaleReading) {
+        let key = Self.unclaimedKey(kg: reading.weightKg, timestamp: reading.timestamp)
+        unclaimedReadings.removeAll { Self.unclaimedKey(kg: $0.weightKg, timestamp: $0.timestamp) == key }
+        var handled = UserDefaults.standard.stringArray(forKey: Self.handledUnclaimedKey) ?? []
+        handled.append(key)
+        UserDefaults.standard.set(Array(handled.suffix(100)), forKey: Self.handledUnclaimedKey)
+    }
+
+    /// Composition from the frames that belong to the weigh-in in progress: only
+    /// recent ones, so a frame left over from an abandoned measurement can't
+    /// attach itself to a later weight.
+    private func currentComposition(weightKg: Double) -> BodyComposition? {
+        let cutoff = Date().addingTimeInterval(-10)
+        compositionFrames.removeAll { $0.receivedAt < cutoff }
+        return StandardScaleProfile.parseBodyComposition(frames: compositionFrames.map(\.data), weightKg: weightKg,
+                                                         resolution: compositionResolution ?? .standard,
+                                                         dialect: compositionDialect)
+    }
+
+    /// The Weight Scale Feature read finished (or failed): decode what waited.
+    private func weightFeatureResolved(_ resolution: StandardScaleProfile.MassResolution, from p: CBPeripheral) {
+        weightResolution = resolution
+        awaitingWeightFeature = false
+        let frames = pendingWeightFrames
+        pendingWeightFrames.removeAll()
+        for frame in frames { parseWeight(frame, from: p) }
+    }
+
+    /// A frame already saved with the weigh-in that just finished. Only for a
+    /// short while: later, identical bytes are a new weigh-in with the same
+    /// rounded percentages.
+    private func isRetransmittedComposition(_ data: Data) -> Bool {
+        Date().timeIntervalSince(consumedCompositionAt) < 10 && consumedCompositionFrames.contains(data)
+    }
+
+    private func isForAnotherScaleUser(_ index: UInt8?, on p: CBPeripheral) -> Bool {
+        guard let index, let mine = storedScaleUser(for: p)?.index else { return false }
+        return index != mine
+    }
+
+    // MARK: - User Data Service consent (QardioBase X)
+
+    /// Scales with the User Data Service stay silent until a client identifies a
+    /// user: Register New User (once, the scale assigns an index) then Consent
+    /// (every connection) on the User Control Point. The index and the consent
+    /// code we chose are kept per scale so repeat weigh-ins reuse the same user.
+    private func beginUserConsent(on p: CBPeripheral) {
+        guard let userControlPointChar else { return }
+        status = String(localized: "Setting up scale…")
+        // Without an answer the scale would sit on "Setting up…" forever.
+        consentTimeoutWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.log("user control point: no response in 15 s")
+            self?.consentFailed()
+        }
+        consentTimeoutWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: work)
+        if let user = storedScaleUser(for: p) {
+            log("-> user control point: consent, user \(user.index)")
+            p.writeValue(StandardScaleProfile.ControlPoint.consent(userIndex: user.index, consentCode: user.code),
+                         for: userControlPointChar, type: .withResponse)
+        } else {
+            let code = UInt16.random(in: 0...9999)
+            UserDefaults.standard.set(Int(code), forKey: pendingConsentCodeKey(p))
+            log("-> user control point: register new user")
+            p.writeValue(StandardScaleProfile.ControlPoint.register(consentCode: code),
+                         for: userControlPointChar, type: .withResponse)
+        }
+    }
+
+    private func handleUserControlPoint(_ data: Data, from p: CBPeripheral) {
+        typealias ControlPoint = StandardScaleProfile.ControlPoint
+        guard let response = ControlPoint.parseResponse(data) else { return }
+        log("user control point: \(response.requestName) → \(response.valueName)")
+        switch (response.request, response.succeeded) {
+        case (ControlPoint.registerNewUser, true):
+            guard let index = response.userIndex else { return }
+            let code = UserDefaults.standard.integer(forKey: pendingConsentCodeKey(p))
+            UserDefaults.standard.set([Int(index), code], forKey: scaleUserKey(p))
+            beginUserConsent(on: p)
+        case (ControlPoint.consent, true):
+            consentTimeoutWorkItem?.cancel()
+            isConsented = true
+            writeUserProfile(to: p)
+            status = String(localized: "Connected — step on the scale")
+        case (ControlPoint.consent, false) where !didReregisterUser && storedScaleUser(for: p) != nil:
+            // The scale no longer knows our user (reset, or deleted on the
+            // scale): forget it and register afresh — once per connection, so a
+            // scale that keeps refusing can't have its user slots filled up.
+            didReregisterUser = true
+            UserDefaults.standard.removeObject(forKey: scaleUserKey(p))
+            beginUserConsent(on: p)
+        case (ControlPoint.registerNewUser, false) where response.value == ControlPoint.operationFailed:
+            // Typically every user slot is taken, e.g. by profiles the Qardio
+            // app created (#58).
+            consentFailed(reason: "Scale refused a new user (user slots full?)")
+        default:
+            consentFailed()
+        }
+    }
+
+    /// User Data writes need consent first; the scale keeps them per user.
+    private func writeUserProfile(to p: CBPeripheral) {
+        guard let userProfile else {
+            log("user data: no profile to write")
+            return
+        }
+        for (uuid, value) in StandardScaleProfile.UserData.writes(for: userProfile) {
+            guard let ch = userDataChars[CBUUID(string: uuid)] else { continue }
+            log("-> \(uuid): \(hex(value))")
+            p.writeValue(value, for: ch, type: .withResponse)
+        }
+    }
+
+    private func consentFailed(reason: String = "Scale didn't accept this phone") {
+        consentTimeoutWorkItem?.cancel()
+        status = "\(reason) — use “Report your scale” in Settings"
+    }
+
+    private func scaleUserKey(_ p: CBPeripheral) -> String { "udsUser.\(p.identifier.uuidString)" }
+    private func pendingConsentCodeKey(_ p: CBPeripheral) -> String { "udsPendingCode.\(p.identifier.uuidString)" }
+
+    private func storedScaleUser(for p: CBPeripheral) -> (index: UInt8, code: UInt16)? {
+        guard let pair = UserDefaults.standard.array(forKey: scaleUserKey(p)) as? [Int], pair.count == 2,
+              let index = UInt8(exactly: pair[0]), let code = UInt16(exactly: pair[1]) else { return nil }
+        return (index, code)
     }
 
     // MARK: - Recon logging
@@ -282,28 +628,20 @@ final class ScaleClient: NSObject, ObservableObject {
     }
 
     /// Final QardioBase result. Unlike the noisy engineering stream, this is
-    /// plain UTF-8 JSON, e.g. {"weight":"76.0","bmi":"19.3",...}.
+    /// plain UTF-8 JSON, e.g. {"weight":"76.0","bmi":"19.3",...} — decoded by
+    /// `QardioResult`.
     private func parseQardioMeasurementJSON(_ data: Data) {
         // The result is read on two triggers per weigh-in; only save it once.
         guard !didFinalizeSession else { return }
 
-        guard
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let weightText = json["weight"] as? String,
-            let weightKg = Double(weightText),
-            isValidWeight(weightKg)
-        else {
+        guard let reading = QardioResult.parse(data) else {
             if let text = String(data: data, encoding: .utf8), !text.isEmpty {
                 log("qardio measurement JSON unparsed: \(text)")
             }
             return
         }
 
-        // The JSON also includes a "bmi" field, but it relies on a height set via
-        // the Qardio app; we ignore it and compute BMI in-app from a stored height.
-        let reading = ScaleReading(weightKg: weightKg, timestamp: Date())
-
-        log(String(format: "qardio measurement JSON decoded: %.1f kg", weightKg))
+        log(String(format: "qardio measurement JSON decoded: %.1f kg", reading.weightKg))
 
         // Set the guard synchronously (delegate callbacks run on the main queue):
         // if a second result read is already in flight, it must see the flag set
@@ -314,7 +652,7 @@ final class ScaleClient: NSObject, ObservableObject {
             self.lastReading = reading
             self.sessionActive = false
             self.qardioMeasurementActive = false
-            self.status = "Weigh-in complete"
+            self.status = String(localized: "Weigh-in complete")
             self.onFinalReading?(reading)
         }
     }
@@ -324,8 +662,10 @@ final class ScaleClient: NSObject, ObservableObject {
         switch v {
         case 0x00: return "idle"
         case 0x01: return "config"
+        case 0x02: return "ready"
         case 0x03: return "measuring"
         case 0x06: return "done"
+        case 0x0c: return "sleeping"
         default:   return String(format: "0x%02x", v)
         }
     }
@@ -347,10 +687,41 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         switch central.state {
         case .poweredOn:
-            startConnect()
+            if restoredFromBackground, let p = peripheral {
+                // Relaunched in the background for the scale: carry on with the
+                // connection iOS handed back instead of resetting it.
+                restoredFromBackground = false
+                if p.state == .connected {
+                    centralManager(central, didConnect: p)
+                } else {
+                    central.connect(p, options: nil)
+                }
+            } else {
+                restoredFromBackground = false
+                startConnect()
+            }
         default:
-            status = "Bluetooth not available"
+            status = String(localized: "Bluetooth not available")
             isConnected = false
+        }
+    }
+
+    func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        guard let p = (dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral])?.first else { return }
+        peripheral = p
+        p.delegate = self
+        restoredFromBackground = true
+        // The scale may already be mid-weigh-in, with its notifications still
+        // subscribed: take the cached characteristics now so a result-ready
+        // notification that beats rediscovery can still read the result.
+        for ch in (p.services ?? []).flatMap({ $0.characteristics ?? [] }) {
+            switch ch.uuid {
+            case weightMeasurement: weightChar = ch
+            case qbMeasure: qardioEngineeringChar = ch
+            case qbResult: qardioMeasurementChar = ch
+            case batteryLevel: batteryChar = ch
+            default: break
+            }
         }
     }
 
@@ -367,6 +738,10 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         let advertisesQardioBase =
             (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID])?.contains(qbService) ?? false
 
+        // One scale at a time: a pending connect can complete while a scan is
+        // still running, and a second scale in range must not displace it.
+        guard !isConnected else { return }
+
         // Accept by name hint or by advertised standard service.
         guard advName.localizedCaseInsensitiveContains(nameHint) || advertisesWeightScale || advertisesQardioBase else {
             return
@@ -376,7 +751,8 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         // scale sleeps before the connect completes, the timeout fires and the
         // pending connect stays queued to finish when it wakes.
         central.stopScan()
-        status = "Connecting…"
+        discoveredName = advName.isEmpty ? nil : advName
+        status = String(localized: "Connecting…")
         self.peripheral = p
         p.delegate = self
         central.connect(p, options: nil)
@@ -385,15 +761,37 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManager(_ central: CBCentralManager, didConnect p: CBPeripheral) {
         isConnected = true
         connectTimeoutWorkItem?.cancel()
+        central.stopScan()
+        UserDefaults.standard.set(p.identifier.uuidString, forKey: knownScaleKey)
         // Fresh connection → clean session state so the next step-on records.
         intentionalDisconnect = false
+        rearmAfterTeardown = false
         sessionActive = false
         didFinalizeSession = false
         qardioMeasurementActive = false
-        status = "Connected — discovering…"
+        didRetryResultRead = false
+        resultRetryWorkItem?.cancel()
+        status = String(localized: "Connected — discovering…")
+        compositionFrames.removeAll()
+        continuationAccepted = nil
+        consumedCompositionFrames.removeAll()
+        finalizedWeightFrame = nil
+        finalizedWeightTimestamp = nil
+        consentStarted = false
+        didReregisterUser = false
+        userDataChars.removeAll()
+        isConsented = false
+        weightResolution = nil
+        compositionResolution = nil
+        let name = p.name ?? discoveredName ?? ""
+        compositionDialect = name.localizedCaseInsensitiveContains("QardioBase X") ? .qardioX : .standard
+        awaitingWeightFeature = false
+        didRetryWeightFeature = false
+        pendingWeightFrames.removeAll()
         // Recon: discover everything. Otherwise just the services we need.
         p.discoverServices(reconMode ? nil
-            : [weightScaleService, bodyCompService, batteryService, deviceInfoService, qbService])
+            : [weightScaleService, bodyCompService, batteryService, deviceInfoService, qbService,
+               userDataService, currentTimeService])
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
@@ -401,7 +799,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         intentionalDisconnect = false
         // Keep trying on our own: resume scanning so the next advertisement
         // reconnects automatically rather than stranding the user on a manual tap.
-        status = "Reconnecting… step on the scale"
+        status = String(localized: "Reconnecting… step on the scale")
         central.scanForPeripherals(withServices: nil, options: nil)
     }
 
@@ -412,12 +810,27 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         qardioEngineeringChar = nil
         qardioMeasurementChar = nil
         qardioMeasurementActive = false
+        resultRetryWorkItem?.cancel()
+        bodyCompChar = nil
+        userControlPointChar = nil
+        continuationAccepted = nil
+        userDataChars.removeAll()
+        isConsented = false
+        weightResolution = nil
+        compositionResolution = nil
+        awaitingWeightFeature = false
+        pendingWeightFrames.removeAll()
+        consentTimeoutWorkItem?.cancel()
         updateBatteryStatus(nil)
 
         // A deliberate teardown (Retry) is owned by startConnect — don't fight it
         // by re-queuing a connect to the peripheral we just dropped.
         if intentionalDisconnect {
             intentionalDisconnect = false
+            if rearmAfterTeardown {
+                rearmAfterTeardown = false
+                central.connect(p, options: nil)
+            }
             return
         }
 
@@ -426,11 +839,12 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         // timeout — CoreBluetooth keeps it queued and reconnects the moment the
         // scale wakes on the next step-on, so repeated weigh-ins record without
         // tapping Retry.
-        status = "Step on the scale to weigh again"
+        status = String(localized: "Step on the scale to weigh again")
         central.connect(p, options: nil)
     }
 
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
+        servicesAwaitingCharacteristics = p.services?.count ?? 0
         for s in p.services ?? [] {
             log("service: \(s.uuid)")
             p.discoverCharacteristics(nil, for: s)
@@ -443,16 +857,46 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
 
             switch ch.uuid {
             case weightMeasurement:
-                // Only the standard Weight Measurement (0x2A9D) is parsed. Body
-                // Composition (0x2A9C) has a different layout and no parser yet,
-                // so we don't subscribe to it — subscribing would mark the scale
-                // "supported" and then never produce a reading.
                 weightChar = ch
                 p.setNotifyValue(true, for: ch)
+            case weightFeature:
+                awaitingWeightFeature = ch.properties.contains(.read)
+                if awaitingWeightFeature { p.readValue(for: ch) }
+            case bodyCompFeature:
+                if ch.properties.contains(.read) { p.readValue(for: ch) }
+            case bodyCompMeasurement:
+                // Supplements a weight reading; never marks the scale supported
+                // on its own.
+                bodyCompChar = ch
+                p.setNotifyValue(true, for: ch)
+            case userControlPoint:
+                // The consent flow starts once its indications are on — see
+                // didUpdateNotificationStateFor.
+                userControlPointChar = ch
+                p.setNotifyValue(true, for: ch)
+            case _ where s.uuid == userDataService && ch.properties.contains(.write)
+                && StandardScaleProfile.UserData.writableUUIDs.contains(ch.uuid.uuidString):
+                userDataChars[ch.uuid] = ch
+                if reconMode, ch.properties.contains(.read) { p.readValue(for: ch) }
+                if reconMode, ch.properties.contains(.notify) || ch.properties.contains(.indicate) {
+                    p.setNotifyValue(true, for: ch)
+                }
+            case currentTime:
+                // A scale whose clock was never set (the Qardio app used to do
+                // it) reads 1970; some refuse to measure until it is written.
+                if ch.properties.contains(.write) {
+                    p.writeValue(StandardScaleProfile.currentTime(Date()), for: ch, type: .withResponse)
+                }
+                if reconMode, ch.properties.contains(.read) { p.readValue(for: ch) }
             case qbControl:
                 // State machine (00 idle, 03 measuring, 06 done) — drives the
                 // result read. Required: without this notify the scale is silent.
                 p.setNotifyValue(true, for: ch)
+                // Also read the current state once: the scale can finish a
+                // weigh-in while iOS is still connecting, and then the "done"
+                // notification is never seen. A read answering 06 lands in the
+                // same handler and reads that result.
+                if ch.properties.contains(.read) { p.readValue(for: ch) }
             case qbMeasure:
                 qardioEngineeringChar = ch
                 if ch.properties.contains(.notify) || ch.properties.contains(.indicate) {
@@ -477,16 +921,47 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
                 }
             }
         }
+        servicesAwaitingCharacteristics -= 1
         if weightChar != nil || qardioMeasurementChar != nil {
-            status = "Connected — step on the scale"
-        } else if !reconMode {
-            status = "Scale found, but no supported weight service."
+            // With a User Control Point the scale isn't ready until consent.
+            if userControlPointChar == nil { status = String(localized: "Connected — step on the scale") }
+        } else if !reconMode, servicesAwaitingCharacteristics <= 0 {
+            status = String(localized: "Scale found, but no supported weight service.")
         }
     }
 
     func peripheral(_ p: CBPeripheral, didUpdateValueFor ch: CBCharacteristic, error: Error?) {
+        if ch.uuid == qbResult, error != nil {
+            // Expected: the result is read on two triggers per weigh-in, and once
+            // it has been read the scale fails further reads. Only a failure
+            // before we have the result is worth one more try.
+            log("qardio measurement read failed: \(error?.localizedDescription ?? "?")")
+            if !didFinalizeSession, !didRetryResultRead {
+                didRetryResultRead = true
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self, !self.didFinalizeSession else { return }
+                    self.readQardioMeasurementJSON()
+                }
+                resultRetryWorkItem = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+            }
+            return
+        }
         guard error == nil, let data = ch.value else {
-            status = "Read error"
+            switch ch.uuid {
+            case weightFeature where !didRetryWeightFeature:
+                // The default resolution reads an X 10× too low: try once more.
+                didRetryWeightFeature = true
+                p.readValue(for: ch)
+            case weightFeature:
+                // Rather the spec default than weight frames held forever.
+                log("weight feature unreadable — decoding at the spec default")
+                weightFeatureResolved(.standard, from: p)
+            case bodyCompFeature:
+                log("body composition feature unreadable — decoding at the spec default")
+            default:
+                status = String(localized: "Read error")
+            }
             return
         }
 
@@ -499,7 +974,9 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
                 qardioMeasurementActive = true
                 sessionActive = true
                 didFinalizeSession = false
-                status = "Measuring…"
+                didRetryResultRead = false
+                resultRetryWorkItem?.cancel()
+                status = String(localized: "Measuring…")
             case 0x06:
                 qardioMeasurementActive = false
                 readQardioMeasurementJSON()
@@ -520,10 +997,24 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         }
 
         switch ch.uuid {
+        case weightFeature:
+            weightFeatureResolved(StandardScaleProfile.weightResolution(feature: data), from: p)
+        case bodyCompFeature:
+            compositionResolution = StandardScaleProfile.bodyCompositionResolution(feature: data)
+            // A weight decoded before this arrived used the default for water.
+            if sessionActive, let weightKg = lastReading?.weightKg {
+                lastReading?.composition = currentComposition(weightKg: weightKg)
+            }
         case weightMeasurement:
-            parseWeight(data)
+            parseWeight(data, from: p)
+        case bodyCompMeasurement:
+            parseBodyComposition(data, from: p)
+        case userControlPoint:
+            handleUserControlPoint(data, from: p)
         case qbResult:
-            parseQardioMeasurementJSON(data)
+            // The scale may pad the JSON with NULs, which JSONSerialization
+            // rejects as trailing garbage.
+            parseQardioMeasurementJSON(Data(data.reversed().drop(while: { $0 == 0 }).reversed()))
         case batteryLevel:
             if !data.isEmpty {
                 let level = Int(data[0])
@@ -538,7 +1029,20 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     func peripheral(_ p: CBPeripheral, didUpdateNotificationStateFor ch: CBCharacteristic, error: Error?) {
         if let error = error {
-            status = "Notify error: \(error.localizedDescription)"
+            status = String(localized: "Notify error: \(error.localizedDescription)")
+            return
         }
+        if ch.uuid == userControlPoint, ch.isNotifying, !consentStarted {
+            consentStarted = true
+            beginUserConsent(on: p)
+        }
+    }
+
+    func peripheral(_ p: CBPeripheral, didWriteValueFor ch: CBCharacteristic, error: Error?) {
+        // Diagnostic only: a rejected write (e.g. the scale wants pairing) is what
+        // a capture needs to show for a scale we can't test ourselves.
+        guard let error else { return }
+        log("write to \(ch.uuid) failed: \(error.localizedDescription)")
+        if ch.uuid == userControlPoint { consentFailed() }
     }
 }

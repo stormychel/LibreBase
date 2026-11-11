@@ -15,9 +15,15 @@ struct ContentView: View {
     @AppStorage("autoSaveToHealth") private var autoSaveToHealth = true
     @AppStorage("heightCm") private var heightCm = 0.0
     @AppStorage(WeightUnitSetting.storageKey) private var weightUnitSetting = WeightUnitSetting.automatic
+    @AppStorage(ScaleUserBinding.boundIDKey) private var scaleUserID = ""
+    @AppStorage(ScaleUserBinding.saveAnyUserKey) private var saveAnyScaleUser = false
+    @ObservedObject private var recorder = WeighInRecorder.shared
     @State private var showHeightSheet = false
+    /// Unattributed weigh-ins being saved (#61).
+    @State private var claiming: Set<String> = []
     @State private var showSettings = false
     @State private var showReportScale = false
+    @State private var showHistory = false
     @State private var showHealthDeniedAlert = false
     @State private var pickerCmValue = 170   // wheel selection, metric (cm)
     @State private var pickerFeet = 5         // wheel selection, imperial
@@ -49,6 +55,10 @@ struct ContentView: View {
 
     private var weightUnit: String { weightInKg ? "kg" : "lb" }
 
+    private func formatted(kg: Double) -> String {
+        String(format: "%.1f", weightInKg ? kg : kg / 0.45359237)
+    }
+
     // BMI is computed in-app from a locally stored height. We deliberately ignore
     // the scale's own BMI: it depends on a height set via the (discontinued)
     // Qardio app and is often stale, for another user, or absent entirely.
@@ -61,16 +71,38 @@ struct ContentView: View {
     /// Plain-language BMI band plus the color used for its badge.
     private func bmiCategory(_ value: Double) -> (label: String, color: Color) {
         switch value {
-        case ..<18.5: return ("Underweight", .blue)
-        case ..<25:   return ("Normal", .green)
-        case ..<30:   return ("Overweight", .orange)
-        default:      return ("Obese", .red)
+        case ..<18.5: return (String(localized: "Underweight"), .blue)
+        case ..<25:   return (String(localized: "Normal"), .green)
+        case ..<30:   return (String(localized: "Overweight"), .orange)
+        default:      return (String(localized: "Obese"), .red)
         }
+    }
+
+    /// The scale's own body composition for the reading on screen, when it sent any.
+    private var compositionLine: String? {
+        guard let c = scale.lastReading?.composition else { return nil }
+        let parts = [("Fat", c.fatPct), ("Water", c.waterPct), ("Muscle", c.musclePct), ("Bone", c.bonePct)]
+            .compactMap { label, value in value.map { "\(label) \(Int($0.rounded()))%" } }
+            + [c.heartRateBpm.map { "Pulse \(Int($0.rounded())) bpm" }].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// What a User Data scale (QardioBase X) is told about its user after
+    /// consent (#60). Written at once if the scale has already consented.
+    private func updateScaleUserProfile() {
+        let (birth, sex) = health.characteristics()
+        scale.userProfile = StandardScaleProfile.UserProfile(heightCm: heightCm > 0 ? heightCm : nil,
+                                                             dateOfBirth: birth, sex: sex)
+    }
+
+    private var scaleUserLabel: String {
+        if saveAnyScaleUser { return "Everyone" }
+        return recorder.knownScaleUsers[scaleUserID] ?? "Not set"
     }
 
     /// Current height rendered in the user's preferred unit, or a prompt if unset.
     private var heightLabel: String {
-        guard heightCm > 0 else { return "Set height" }
+        guard heightCm > 0 else { return String(localized: "Set height") }
         if useMetric { return "\(Int(heightCm.rounded())) cm" }
         let totalIn = Int((heightCm / 2.54).rounded())
         return "\(totalIn / 12)′ \(totalIn % 12)″"
@@ -103,6 +135,10 @@ struct ContentView: View {
                     statusPills
                     heroCard
 
+                    ForEach(scale.unclaimedReadings, id: \.unclaimedID) { reading in
+                        unclaimedCard(reading)
+                    }
+
                     // When a previous reading is on screen but the scale has since
                     // dropped (it powers down after each weigh-in), offer a manual
                     // reconnect. The no-reading disconnected case is handled inside
@@ -120,6 +156,22 @@ struct ContentView: View {
                         }
                     }
 
+                    // Auto-save is off: offer to save this one weigh-in by hand
+                    // instead of silently discarding it.
+                    if let reading = recorder.unsavedReading, scale.lastReading != nil {
+                        Button {
+                            recorder.unsavedReading = nil
+                            recorder.save(reading)
+                        } label: {
+                            Label("Save to Apple Health", systemImage: "heart.fill")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                                .background(Brand.gradient, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .foregroundStyle(.white)
+                        }
+                    }
+
                     settingsCard
                 }
                 .padding(.horizontal, 20)
@@ -129,11 +181,22 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showHeightSheet) { heightPicker }
         .sheet(isPresented: $showSettings) { settingsSheet }
+        .sheet(isPresented: $showHistory) {
+            HistoryView(useMetric: useMetric).environmentObject(health)
+        }
         .onChange(of: scenePhase) { _, phase in
             // iOS suspends BLE scans in the background; re-arm one on return so the
             // scale reconnects on its own without the user tapping Reconnect.
-            if phase == .active { scale.resumeScanning() }
+            if phase == .active {
+                scale.resumeScanning()
+                // Date of birth or sex may have changed in Health meanwhile.
+                updateScaleUserProfile()
+            }
+            // Leave a connection request pending so the next step-on wakes the
+            // app and records the weigh-in without it being opened. See #19.
+            if phase == .background { scale.armPendingConnect() }
         }
+        .onChange(of: heightCm) { _, _ in updateScaleUserProfile() }
         .onChange(of: autoSaveToHealth) { _, isOn in
             // Flipping the in-app toggle on does nothing unless iOS will accept the
             // writes. HealthKit's permission sheet appears only once, ever, so if it
@@ -165,6 +228,7 @@ struct ContentView: View {
             // Health machinery (no prompts, no scanning) so captures are clean.
             if ScreenshotMode.isActive {
                 if ScreenshotMode.showsReading { scale.loadDemoReading() }
+                if ScreenshotMode.showsHistory { showHistory = true }
                 return
             }
 
@@ -173,27 +237,10 @@ struct ContentView: View {
             // start it here too. Idempotent.
             scale.start()
 
-            // Register the save callback before awaiting authorization: the
-            // permission prompt suspends this task, and a weigh-in could
-            // finalize while it's up. Installing it first avoids dropping
-            // that first reading.
-            scale.onFinalReading = { reading in
-                guard autoSaveToHealth else { return }
-                Task { @MainActor in
-                    do {
-                        try await health.saveWeight(kg: reading.weightKg, date: reading.timestamp)
-                        scale.status = "Saved to Apple Health"
-                        UINotificationFeedbackGenerator().notificationOccurred(.success)
-                    } catch {
-                        scale.status = "Couldn't save to Health — check Settings ▸ Privacy ▸ Health"
-                    }
-                }
-            }
-
             do {
                 try await health.requestAuth()
             } catch {
-                scale.status = "Health permission denied"
+                scale.status = String(localized: "Health permission denied")
             }
 
             // Seed height from Apple Health when the user hasn't set one
@@ -202,6 +249,7 @@ struct ContentView: View {
             if heightCm == 0, let h = await health.latestHeightCm() {
                 heightCm = h
             }
+            updateScaleUserProfile()
         }
     }
 
@@ -253,7 +301,51 @@ struct ContentView: View {
         }
         .font(.subheadline)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(scale.batteryLevelPct.map { "Battery \($0) percent" } ?? "Battery level unknown")
+        .accessibilityLabel(scale.batteryLevelPct.map { String(localized: "Battery \($0) percent") } ?? String(localized: "Battery level unknown"))
+    }
+
+    // MARK: - Unattributed weigh-ins (#61)
+
+    /// A weigh-in the scale replayed without a user: offer it to this phone's
+    /// owner instead of dropping it.
+    private func unclaimedCard(_ reading: ScaleReading) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Unassigned weigh-in", systemImage: "questionmark.circle")
+                .font(.subheadline.weight(.semibold))
+            Text("The scale recorded \(formatted(kg: reading.weightKg)) \(weightUnit) on \(reading.timestamp.formatted(date: .abbreviated, time: .shortened)) without knowing who stood on it. Was it you?")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Save to Health") { claim(reading) }
+                    .disabled(claiming.contains(reading.unclaimedID))
+                    .buttonStyle(.borderedProminent)
+                    .tint(Brand.teal)
+                Button("Not me") { scale.resolveUnclaimed(reading) }
+                    .buttonStyle(.bordered)
+            }
+            .font(.subheadline)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func claim(_ reading: ScaleReading) {
+        // A second tap while saving would write a duplicate sample.
+        guard claiming.insert(reading.unclaimedID).inserted else { return }
+        Task { @MainActor in
+            defer { claiming.remove(reading.unclaimedID) }
+            do {
+                try await health.saveWeight(kg: reading.weightKg, date: reading.timestamp)
+                // Only now: a failed save keeps the card so it can be retried.
+                scale.resolveUnclaimed(reading)
+                scale.status = String(localized: "Saved to Apple Health")
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } catch {
+                scale.status = String(localized: "Couldn't save to Health — check Settings ▸ Privacy ▸ Health")
+            }
+        }
     }
 
     // MARK: - Status pills
@@ -341,6 +433,13 @@ struct ContentView: View {
                     }
                 }
 
+                if let compositionLine {
+                    Text(compositionLine)
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .multilineTextAlignment(.center)
+                }
+
                 if let r = scale.lastReading {
                     Text(r.timestamp, format: Date.FormatStyle(date: .abbreviated, time: .shortened))
                         .font(.footnote)
@@ -412,7 +511,7 @@ struct ContentView: View {
 
     private var settingsCard: some View {
         VStack(spacing: 0) {
-            Toggle("Save to Apple Health", isOn: $autoSaveToHealth)
+            Toggle("Auto-save to Apple Health", isOn: $autoSaveToHealth)
                 .padding(.vertical, 14)
                 .padding(.horizontal, 16)
 
@@ -446,6 +545,70 @@ struct ContentView: View {
                 }
                 .padding(.vertical, 14)
                 .padding(.horizontal, 16)
+            }
+
+            Divider().padding(.leading, 16)
+
+            // Weigh-in history and trend, read back from Apple Health (#16).
+            Button {
+                showHistory = true
+            } label: {
+                HStack {
+                    Text("History")
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Image(systemName: "chart.xyaxis.line")
+                        .foregroundStyle(Brand.teal)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.bold())
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.vertical, 14)
+                .padding(.horizontal, 16)
+            }
+
+            // Only scales that tag weigh-ins with a user (QardioBase 2) get this
+            // row — it appears after the first such weigh-in.
+            if !recorder.knownScaleUsers.isEmpty {
+                Divider().padding(.leading, 16)
+
+                Menu {
+                    ForEach(recorder.knownScaleUsers.sorted { $0.value < $1.value }, id: \.key) { id, name in
+                        Button {
+                            scaleUserID = id
+                            saveAnyScaleUser = false
+                        } label: {
+                            if !saveAnyScaleUser && scaleUserID == id {
+                                Label(name, systemImage: "checkmark")
+                            } else {
+                                Text(name)
+                            }
+                        }
+                    }
+                    Divider()
+                    Button {
+                        saveAnyScaleUser = true
+                    } label: {
+                        if saveAnyScaleUser {
+                            Label("Everyone", systemImage: "checkmark")
+                        } else {
+                            Text("Everyone")
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Text("Save weigh-ins for")
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text(scaleUserLabel)
+                            .foregroundStyle(.secondary)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption.bold())
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.vertical, 14)
+                    .padding(.horizontal, 16)
+                }
             }
         }
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -481,8 +644,8 @@ struct ContentView: View {
                     Text("Support & Legal")
                 } footer: {
                     VStack(spacing: 10) {
-                        Text("LibreBase is tested only with the original QardioBase (1st gen). Have a QardioBase 2 or X? Tap “Report your scale” — we'd love to help support it.")
-                        Text(Constants.versionLabel + " · open source, MIT licensed.")
+                        Text("LibreBase works with the original QardioBase (1st gen) and the QardioBase 2. Have a QardioBase X? Tap “Report your scale” — we'd love to help support it.")
+                        Text("\(Constants.versionLabel) · open source, MIT licensed.")
                     }
                     .frame(maxWidth: .infinity)
                     .multilineTextAlignment(.center)
@@ -569,4 +732,9 @@ enum WeightUnitSetting: String, CaseIterable {
         case .pounds: false
         }
     }
+}
+
+extension ScaleReading {
+    /// Weight + scale timestamp: one per unattributed weigh-in (#61).
+    var unclaimedID: String { ScaleClient.unclaimedKey(self) }
 }
