@@ -13,6 +13,14 @@ import Foundation
 struct ScaleReading {
     let weightKg: Double
     let timestamp: Date
+    /// Only set by scales that report it (QardioBase result JSON).
+    var composition: BodyComposition?
+    var scaleUser: ScaleUser?
+
+    /// Physiologically plausible adult weight range, also rejects SFLOAT/NaN junk.
+    static func isPlausibleWeight(_ kg: Double) -> Bool {
+        kg.isFinite && kg >= 2 && kg <= 400
+    }
 }
 
 /// Connects to a Qardio (Base) smart scale over Bluetooth LE, reads weight, and
@@ -204,9 +212,8 @@ final class ScaleClient: NSObject, ObservableObject {
 
     // MARK: - Validation
 
-    /// Physiologically plausible adult weight range, also rejects SFLOAT/NaN junk.
     private func isValidWeight(_ kg: Double) -> Bool {
-        kg.isFinite && kg >= 2 && kg <= 400
+        ScaleReading.isPlausibleWeight(kg)
     }
 
     // MARK: - Finalize
@@ -282,28 +289,20 @@ final class ScaleClient: NSObject, ObservableObject {
     }
 
     /// Final QardioBase result. Unlike the noisy engineering stream, this is
-    /// plain UTF-8 JSON, e.g. {"weight":"76.0","bmi":"19.3",...}.
+    /// plain UTF-8 JSON, e.g. {"weight":"76.0","bmi":"19.3",...} — decoded by
+    /// `QardioResult`.
     private func parseQardioMeasurementJSON(_ data: Data) {
         // The result is read on two triggers per weigh-in; only save it once.
         guard !didFinalizeSession else { return }
 
-        guard
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let weightText = json["weight"] as? String,
-            let weightKg = Double(weightText),
-            isValidWeight(weightKg)
-        else {
+        guard let reading = QardioResult.parse(data) else {
             if let text = String(data: data, encoding: .utf8), !text.isEmpty {
                 log("qardio measurement JSON unparsed: \(text)")
             }
             return
         }
 
-        // The JSON also includes a "bmi" field, but it relies on a height set via
-        // the Qardio app; we ignore it and compute BMI in-app from a stored height.
-        let reading = ScaleReading(weightKg: weightKg, timestamp: Date())
-
-        log(String(format: "qardio measurement JSON decoded: %.1f kg", weightKg))
+        log(String(format: "qardio measurement JSON decoded: %.1f kg", reading.weightKg))
 
         // Set the guard synchronously (delegate callbacks run on the main queue):
         // if a second result read is already in flight, it must see the flag set
