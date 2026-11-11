@@ -192,8 +192,12 @@ struct LibreBaseTests {
         ]
         for c in cases {
             let head = hexData(c.head), tail = hexData(c.tail)
-            #expect(Profile.awaitsContinuation(head))
-            #expect(!Profile.awaitsContinuation(tail))
+            #expect(Profile.awaitsContinuation(head, dialect: .qardioX))
+            #expect(!Profile.awaitsContinuation(tail, dialect: .qardioX))
+            #expect(!Profile.awaitsContinuation(head, dialect: .standard))
+            // A retransmitted head between head and continuation changes nothing.
+            #expect(Profile.parseBodyComposition(frames: [head, head, tail], weightKg: c.weight, resolution: x,
+                                                 dialect: .qardioX)?.heartRateBpm == c.pulse)
             // The head alone still yields what fits: fat and muscle.
             #expect(Profile.parseBodyComposition(head) == nil)
             let partial = try #require(Profile.parseBodyComposition(frames: [head], weightKg: c.weight,
@@ -210,6 +214,10 @@ struct LibreBaseTests {
             #expect(abs(c.water - 0.73 * (100 - c.fat)) < 2)
         }
 
+        // Spec scales: the next frame is its own packet, never a flagless tail.
+        let standard = Profile.parseBodyComposition(frames: [hexData(cases[0].head), hexData(cases[0].tail)],
+                                                    weightKg: 84.95, resolution: x)
+        #expect(standard?.heartRateBpm == nil)
         // Implausible impedance in the continuation discards the whole measurement.
         let head = hexData(cases[0].head)
         let noContact = hexData("d8 01 d0 07 10 02 38 00 0c 34 01 95 00 24 6b 77 02 06 25")

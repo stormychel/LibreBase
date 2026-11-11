@@ -116,10 +116,12 @@ enum StandardScaleProfile {
         return composition(from: packet, weightKg: weightKg, resolution: resolution, dialect: .standard)
     }
 
-    /// True for a frame that sets the multiple-packet flag and is too short for
-    /// the fields it flags: the next frame continues it.
-    static func awaitsContinuation(_ data: Data) -> Bool {
-        guard let packet = decodePacket([UInt8](data)) else { return false }
+    /// True for a QardioBase X frame that sets the multiple-packet flag and is
+    /// too short for the fields it flags: the next frame continues it. (A
+    /// continuation starts with water in 0.1 % units, below 0x1000, so it can't
+    /// pass for a head.)
+    static func awaitsContinuation(_ data: Data, dialect: Dialect) -> Bool {
+        guard dialect == .qardioX, let packet = decodePacket([UInt8](data)) else { return false }
         return packet.flags & multiplePacketFlag != 0 && !packet.missing.isEmpty
     }
 
@@ -139,26 +141,32 @@ enum StandardScaleProfile {
             merged.bonePct = part.bonePct ?? merged.bonePct
             merged.heartRateBpm = part.heartRateBpm ?? merged.heartRateBpm
         }
-        // A head awaiting its continuation is merged once the continuation is
-        // in (its impedance may void the whole measurement), or on its own if
-        // none arrives.
-        var pending: Packet?
+        // An X head awaiting its continuation is merged once the continuation
+        // is in (its impedance may void the whole measurement), or on its own if
+        // none arrives. Spec scales send each packet with its own flags.
+        var pending: (packet: Packet, bytes: [UInt8])?
         for frame in frames {
             let bytes = [UInt8](frame)
             if let head = pending {
+                if bytes == head.bytes { continue }  // retransmitted head
+                if !awaitsContinuation(frame, dialect: dialect) {
+                    pending = nil
+                    merge(`continue`(head.packet, with: bytes, dialect: dialect))
+                    continue
+                }
+                // A new head: the previous one lost its continuation.
                 pending = nil
-                merge(`continue`(head, with: bytes, dialect: dialect))
-                continue
+                merge(head.packet)
             }
             guard let packet = decodePacket(bytes) else { continue }
             if packet.missing.isEmpty {
                 merge(packet)
             } else if packet.flags & multiplePacketFlag != 0 {
-                pending = packet
+                if dialect == .qardioX { pending = (packet, bytes) } else { merge(packet) }
             }
             // Truncated without the multiple-packet flag: malformed, skipped.
         }
-        if let head = pending { merge(head) }
+        if let head = pending { merge(head.packet) }
         return merged.isEmpty ? nil : merged
     }
 
@@ -211,8 +219,10 @@ enum StandardScaleProfile {
         let fields = packet.fields
         var composition = BodyComposition()
         // Foot-to-foot impedance outside the plausible window means no usable
-        // skin contact: the composition is noise (as for the vendor JSON).
-        if let impedance = fields[9], !QardioResult.plausibleImpedanceOhm.contains(Double(impedance)) {
+        // skin contact: the composition is noise (as for the vendor JSON). The
+        // X sends whole ohms; the spec's 0.1 Ω unit would need its own window.
+        if dialect == .qardioX, let impedance = fields[9],
+           !QardioResult.plausibleImpedanceOhm.contains(Double(impedance)) {
             return nil
         }
         // 0xFFFF = "measurement unsuccessful". Percentages are in 0.1 % units.

@@ -92,6 +92,8 @@ final class ScaleClient: NSObject, ObservableObject {
     private var continuationAccepted: Bool?
     /// The X splits composition over two frames its own way (#59).
     private var compositionDialect: StandardScaleProfile.Dialect = .standard
+    /// Advertised name, for when the GAP name isn't cached yet.
+    private var discoveredName: String?
     /// One consent attempt per connection, plus at most one re-registration.
     private var consentStarted = false
     private var didReregisterUser = false
@@ -276,6 +278,7 @@ final class ScaleClient: NSObject, ObservableObject {
         guard isValidWeight(reading.weightKg) else {
             sessionActive = false
             compositionFrames.removeAll()
+            continuationAccepted = nil
             status = "Measurement invalid — please step on the scale again."
             return
         }
@@ -284,6 +287,7 @@ final class ScaleClient: NSObject, ObservableObject {
         consumedCompositionFrames = Set(compositionFrames.map(\.data))
         consumedCompositionAt = Date()
         compositionFrames.removeAll()
+        continuationAccepted = nil
         status = "Weigh-in complete"
         onFinalReading?(reading)
     }
@@ -302,6 +306,7 @@ final class ScaleClient: NSObject, ObservableObject {
         // this phone registered must not land in this phone's Health record.
         if isForAnotherScaleUser(weight.userIndex, on: p) {
             compositionFrames.removeAll()
+            continuationAccepted = nil
             status = "Weigh-in for another scale user — not saved"
             return
         }
@@ -337,14 +342,18 @@ final class ScaleClient: NSObject, ObservableObject {
 
     private func parseBodyComposition(_ data: Data, from p: CBPeripheral) {
         // A flagless continuation (#59) has no user index of its own: it shares
-        // the fate of the frame it continues.
-        if let accepted = continuationAccepted {
+        // the fate of the frame it continues. A frame that is itself a head
+        // (e.g. a retransmission) isn't one.
+        if let accepted = continuationAccepted,
+           !StandardScaleProfile.awaitsContinuation(data, dialect: compositionDialect) {
             continuationAccepted = nil
             guard accepted else { return }
         } else {
             let accepted = !isForAnotherScaleUser(StandardScaleProfile.bodyCompositionUserIndex(data), on: p)
                 && !isRetransmittedComposition(data)
-            if StandardScaleProfile.awaitsContinuation(data) { continuationAccepted = accepted }
+            if StandardScaleProfile.awaitsContinuation(data, dialect: compositionDialect) {
+                continuationAccepted = accepted
+            }
             guard accepted else { return }
         }
         compositionFrames.append((data, Date()))
@@ -568,6 +577,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         // scale sleeps before the connect completes, the timeout fires and the
         // pending connect stays queued to finish when it wakes.
         central.stopScan()
+        discoveredName = advName.isEmpty ? nil : advName
         status = "Connecting…"
         self.peripheral = p
         p.delegate = self
@@ -584,6 +594,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         qardioMeasurementActive = false
         status = "Connected — discovering…"
         compositionFrames.removeAll()
+        continuationAccepted = nil
         consumedCompositionFrames.removeAll()
         finalizedWeightFrame = nil
         finalizedWeightTimestamp = nil
@@ -591,8 +602,8 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         didReregisterUser = false
         weightResolution = nil
         compositionResolution = nil
-        continuationAccepted = nil
-        compositionDialect = (p.name ?? "").localizedCaseInsensitiveContains("QardioBase X") ? .qardioX : .standard
+        let name = p.name ?? discoveredName ?? ""
+        compositionDialect = name.localizedCaseInsensitiveContains("QardioBase X") ? .qardioX : .standard
         awaitingWeightFeature = false
         didRetryWeightFeature = false
         pendingWeightFrames.removeAll()
@@ -620,6 +631,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         qardioMeasurementActive = false
         bodyCompChar = nil
         userControlPointChar = nil
+        continuationAccepted = nil
         weightResolution = nil
         compositionResolution = nil
         awaitingWeightFeature = false
