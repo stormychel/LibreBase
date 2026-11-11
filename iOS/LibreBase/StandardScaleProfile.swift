@@ -63,6 +63,9 @@ enum StandardScaleProfile {
 
     // MARK: - Weight Measurement (0x2A9D)
 
+    /// User index for a weigh-in the scale couldn't attribute to anyone.
+    static let unknownUser: UInt8 = 0xFF
+
     /// flags(1) weight(2) [timestamp(7)] [user(1)] [bmi(2) height(2)]
     static func parseWeight(_ data: Data, resolution: MassResolution = .standard,
                             calendar: Calendar = gregorian) -> Weight? {

@@ -46,6 +46,9 @@ final class ScaleClient: NSObject, ObservableObject {
     // MARK: - UI state
     @Published var status = "Searching for scale…"
     @Published var lastReading: ScaleReading?
+    /// Weigh-ins a User Data scale replayed without a user (index 0xFF), e.g.
+    /// ones taken before this phone first consented (#61). The user decides.
+    @Published var unclaimedReadings: [ScaleReading] = []
     @Published var isConnected = false
     @Published var batteryLevelPct: Int?
     @Published var batteryStatusLine = "Battery: unavailable"
@@ -362,6 +365,14 @@ final class ScaleClient: NSObject, ObservableObject {
         guard let weight = StandardScaleProfile.parseWeight(data, resolution: weightResolution ?? .standard)
         else { return }
 
+        // Not attributed to anyone: possibly this phone's owner, before consent.
+        // Gated on the User Control Point, not on a stored user: a scale that
+        // refused registration may still replay, and those mustn't be saved.
+        if weight.userIndex == StandardScaleProfile.unknownUser, userControlPointChar != nil {
+            offerUnclaimed(weight)
+            return
+        }
+
         // On a shared scale, a weigh-in attributed to a user other than the one
         // this phone registered must not land in this phone's Health record.
         if isForAnotherScaleUser(weight.userIndex, on: p) {
@@ -415,7 +426,11 @@ final class ScaleClient: NSObject, ObservableObject {
                 log("body composition: X-style split frame — using the QardioBase X layout")
                 compositionDialect = .qardioX
             }
-            let accepted = !isForAnotherScaleUser(StandardScaleProfile.bodyCompositionUserIndex(data), on: p)
+            let compositionUser = StandardScaleProfile.bodyCompositionUserIndex(data)
+            // An unattributed replay's composition must not join a live weigh-in (#61).
+            let unattributedReplay = compositionUser == StandardScaleProfile.unknownUser && userControlPointChar != nil
+            let accepted = !unattributedReplay
+                && !isForAnotherScaleUser(compositionUser, on: p)
                 && !isRetransmittedComposition(data)
             if StandardScaleProfile.awaitsContinuation(data, dialect: compositionDialect) {
                 continuationAccepted = accepted
@@ -427,6 +442,42 @@ final class ScaleClient: NSObject, ObservableObject {
             lastReading?.composition = currentComposition(weightKg: weightKg)
             scheduleFinalize()
         }
+    }
+
+    /// Keys of unattributed weigh-ins already offered and answered, so a scale
+    /// that replays them on every connection doesn't ask again.
+    static let handledUnclaimedKey = "handledUnclaimedWeighIns"
+
+    static func unclaimedKey(_ reading: ScaleReading) -> String {
+        unclaimedKey(kg: reading.weightKg, timestamp: reading.timestamp)
+    }
+
+    static func unclaimedKey(kg: Double, timestamp: Date) -> String {
+        "\(Int((kg * 100).rounded()))@\(Int(timestamp.timeIntervalSince1970))"
+    }
+
+    private func offerUnclaimed(_ weight: StandardScaleProfile.Weight) {
+        // Without the scale's own clock there's no telling when it was taken.
+        guard isValidWeight(weight.kg), let timestamp = weight.timestamp,
+              timestamp > Date(timeIntervalSince1970: 1_577_836_800), timestamp < Date().addingTimeInterval(300)
+        else { return }
+        let key = Self.unclaimedKey(kg: weight.kg, timestamp: timestamp)
+        let handled = UserDefaults.standard.stringArray(forKey: Self.handledUnclaimedKey) ?? []
+        guard !handled.contains(key),
+              !unclaimedReadings.contains(where: { Self.unclaimedKey(kg: $0.weightKg, timestamp: $0.timestamp) == key })
+        else { return }
+        log("unattributed weigh-in \(weight.kg) kg at \(timestamp): offered to claim")
+        unclaimedReadings.append(ScaleReading(weightKg: weight.kg, timestamp: timestamp))
+        unclaimedReadings.sort { $0.timestamp < $1.timestamp }
+    }
+
+    /// The user claimed or dismissed an unattributed weigh-in: never offer it again.
+    func resolveUnclaimed(_ reading: ScaleReading) {
+        let key = Self.unclaimedKey(kg: reading.weightKg, timestamp: reading.timestamp)
+        unclaimedReadings.removeAll { Self.unclaimedKey(kg: $0.weightKg, timestamp: $0.timestamp) == key }
+        var handled = UserDefaults.standard.stringArray(forKey: Self.handledUnclaimedKey) ?? []
+        handled.append(key)
+        UserDefaults.standard.set(Array(handled.suffix(100)), forKey: Self.handledUnclaimedKey)
     }
 
     /// Composition from the frames that belong to the weigh-in in progress: only

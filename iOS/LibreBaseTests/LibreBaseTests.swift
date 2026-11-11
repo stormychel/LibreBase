@@ -259,4 +259,20 @@ struct LibreBaseTests {
         #expect(UserData.writes(for: .init(heightCm: nil, dateOfBirth: nil, sex: nil)).isEmpty)
         #expect(UserData.writes(for: .init(heightCm: 170, dateOfBirth: nil, sex: nil)).map(\.uuid) == ["2A8E"])
     }
+
+    // MARK: - Unattributed weigh-ins (QardioBase X, issue #61)
+
+    @Test func replayedUnattributedWeighInsShareOneKey() throws {
+        let x = StandardScaleProfile.MassResolution(kgPerUnit: 0.05, lbPerUnit: 0.1)
+        // The X resends a weigh-in with varying top flag bits; all are one weigh-in.
+        let frames = ["0e 2d 07 ea 07 0b 07 07 31 13 ff 00 00 00 00",
+                      "4e 2d 07 ea 07 0b 07 07 31 13 ff 00 00 00 00",
+                      "8e 2d 07 ea 07 0b 07 07 31 13 ff 00 00 00 00"]
+            .map { Data($0.split(separator: " ").map { UInt8($0, radix: 16)! }) }
+        let weights = try frames.map { try #require(StandardScaleProfile.parseWeight($0, resolution: x)) }
+        #expect(weights.allSatisfy { $0.userIndex == StandardScaleProfile.unknownUser })
+        let keys = Set(try weights.map { ScaleClient.unclaimedKey(kg: $0.kg, timestamp: try #require($0.timestamp)) })
+        #expect(keys.count == 1)
+        #expect(abs(weights[0].kg - 91.85) < 0.0001)
+    }
 }
