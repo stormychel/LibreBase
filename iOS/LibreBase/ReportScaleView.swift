@@ -19,6 +19,15 @@ struct ReportScaleView: View {
     @State private var started = false
     @State private var showMail = false
     @State private var mailUnavailable = false
+    @State private var model: ScaleModelAnswer?
+    @State private var connected: YesNo?
+    @State private var showedWeight: YesNo?
+
+    private var summary: CaptureSummary { CaptureSummary(log: scale.reconLog) }
+    /// The form must be complete: blank answers made reports unusable (#56, #62).
+    private var canSend: Bool {
+        !scale.reconLog.isEmpty && model != nil && connected != nil && showedWeight != nil
+    }
 
     private var capturedLines: Int { scale.reconLog.count }
 
@@ -29,6 +38,7 @@ struct ReportScaleView: View {
                     header
                     if started {
                         captureCard
+                        questionsCard
                         sendCard
                     } else {
                         startCard
@@ -105,6 +115,14 @@ struct ReportScaleView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if !scale.reconLog.isEmpty, !summary.qardioFound {
+                // Two blank reports had nothing but a scan list (#62).
+                Label("No Qardio scale found yet. Step on the scale to wake it, and close the Qardio app on every phone — the scale talks to one app at a time.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if !scale.reconLog.isEmpty {
                 ScrollView {
                     Text(scale.reconLog.joined(separator: "\n"))
@@ -116,6 +134,32 @@ struct ReportScaleView: View {
                 .padding(8)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
+        }
+    }
+
+    private var questionsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("About your scale")
+                .font(.headline)
+            Picker("Scale model", selection: $model) {
+                Text("Choose…").tag(ScaleModelAnswer?.none)
+                ForEach(ScaleModelAnswer.allCases, id: \.self) { Text($0.label).tag(Optional($0)) }
+            }
+            .pickerStyle(.menu)
+            .tint(Brand.teal)
+            answerRow("Did LibreBase connect to the scale?", $connected)
+            answerRow("Did LibreBase show a weight?", $showedWeight)
+        }
+    }
+
+    private func answerRow(_ question: String, _ answer: Binding<YesNo?>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(question)
+                .font(.subheadline)
+            Picker(question, selection: answer) {
+                ForEach(YesNo.allCases, id: \.self) { Text($0.rawValue).tag(Optional($0)) }
+            }
+            .pickerStyle(.segmented)
         }
     }
 
@@ -132,11 +176,16 @@ struct ReportScaleView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
                     .background(
-                        scale.reconLog.isEmpty ? AnyShapeStyle(Color.secondary.opacity(0.5)) : AnyShapeStyle(Brand.gradient),
+                        canSend ? AnyShapeStyle(Brand.gradient) : AnyShapeStyle(Color.secondary.opacity(0.5)),
                         in: RoundedRectangle(cornerRadius: 14, style: .continuous)
                     )
             }
-            .disabled(scale.reconLog.isEmpty)
+            .disabled(!canSend)
+            if !scale.reconLog.isEmpty, !canSend {
+                Text("Answer the questions above to send.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -163,8 +212,10 @@ struct ReportScaleView: View {
         """
         I'd like to help add support for my Qardio scale.
 
-        My scale model (please fill in): \u{0020}
-        Did LibreBase connect / show a weight?: \u{0020}
+        My scale model: \(model?.label ?? "—")
+        Did LibreBase connect?: \(connected?.rawValue ?? "—")
+        Did LibreBase show a weight?: \(showedWeight?.rawValue ?? "—")
+        Detected in capture: \(summary.description)
 
         — Diagnostic info —
         \(Constants.versionLabel)
@@ -188,6 +239,48 @@ struct ReportScaleView: View {
             guard let value = element.value as? Int8, value != 0 else { return }
             result.append(Character(UnicodeScalar(UInt8(value))))
         }
+    }
+}
+
+/// The scale models a report can name.
+enum ScaleModelAnswer: CaseIterable {
+    case original, base2, baseX, notSure
+
+    var label: String {
+        switch self {
+        case .original: "QardioBase (original)"
+        case .base2: "QardioBase 2"
+        case .baseX: "QardioBase X"
+        case .notSure: "Not sure"
+        }
+    }
+}
+
+enum YesNo: String, CaseIterable { case yes = "Yes", no = "No" }
+
+/// What a Recon capture shows on its own, so a report says it even when the
+/// sender's answers don't (#56, #62).
+struct CaptureSummary: Equatable {
+    var qardioFound = false
+    /// Model Number String, decoded from its hex bytes ("B100", "B200", "BX00").
+    var modelNumber: String?
+    var gotMeasurement = false
+
+    init(log: [String]) {
+        for line in log {
+            if line.hasPrefix("found peripheral:"), line.localizedCaseInsensitiveContains("qardio") { qardioFound = true }
+            if line.hasPrefix("<- Model Number String: ") {
+                let bytes = line.dropFirst("<- Model Number String: ".count).split(separator: " ").compactMap { UInt8($0, radix: 16) }
+                modelNumber = String(bytes: bytes, encoding: .utf8)
+                qardioFound = true
+            }
+            if line.hasPrefix("<- 2A9D:") || line.hasPrefix("qardio measurement JSON decoded") { gotMeasurement = true }
+        }
+    }
+
+    var description: String {
+        guard qardioFound else { return "no Qardio scale found" }
+        return "model \(modelNumber ?? "unknown"), \(gotMeasurement ? "measurement received" : "no measurement")"
     }
 }
 
