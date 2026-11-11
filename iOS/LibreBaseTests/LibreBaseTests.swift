@@ -226,5 +226,11 @@ struct LibreBaseTests {
                                              resolution: x, dialect: .qardioX) == nil)
         #expect(Profile.parseBodyComposition(frames: [head, noContact, head], weightKg: 84.95,
                                              resolution: x, dialect: .qardioX) == nil)
+        #expect(Profile.parseBodyComposition(frames: [head, noContact, head, noContact], weightKg: 84.95,
+                                             resolution: x, dialect: .qardioX) == nil)
+        // A retransmitted good pair still gives the one measurement.
+        let tail = hexData(cases[0].tail)
+        #expect(Profile.parseBodyComposition(frames: [head, tail, head, tail], weightKg: 84.95,
+                                             resolution: x, dialect: .qardioX)?.heartRateBpm == 107)
     }
 }

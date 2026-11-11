@@ -146,10 +146,19 @@ enum StandardScaleProfile {
         // none arrives. Spec scales send each packet with its own flags.
         var pending: (packet: Packet, bytes: [UInt8])?
         var seenHeads: Set<[UInt8]> = []
+        var skipContinuation = false
         for frame in frames {
             let bytes = [UInt8](frame)
-            // A head already handled (merged or voided) is a retransmission.
-            if dialect == .qardioX, pending?.bytes != bytes, seenHeads.contains(bytes) { continue }
+            // A head already handled (merged or voided) is a retransmission, and
+            // so is the continuation after it.
+            if dialect == .qardioX, pending?.bytes != bytes, seenHeads.contains(bytes) {
+                skipContinuation = true
+                continue
+            }
+            if skipContinuation {
+                skipContinuation = false
+                if !awaitsContinuation(frame, dialect: dialect) { continue }
+            }
             if let head = pending {
                 if bytes == head.bytes { continue }  // retransmitted head
                 if !awaitsContinuation(frame, dialect: dialect) {
