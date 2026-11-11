@@ -72,6 +72,14 @@ struct ContentView: View {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
+    /// What a User Data scale (QardioBase X) is told about its user after
+    /// consent (#60). Written at once if the scale has already consented.
+    private func updateScaleUserProfile() {
+        let (birth, sex) = health.characteristics()
+        scale.userProfile = StandardScaleProfile.UserProfile(heightCm: heightCm > 0 ? heightCm : nil,
+                                                             dateOfBirth: birth, sex: sex)
+    }
+
     private var scaleUserLabel: String {
         if saveAnyScaleUser { return "Everyone" }
         return recorder.knownScaleUsers[scaleUserID] ?? "Not set"
@@ -157,11 +165,16 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             // iOS suspends BLE scans in the background; re-arm one on return so the
             // scale reconnects on its own without the user tapping Reconnect.
-            if phase == .active { scale.resumeScanning() }
+            if phase == .active {
+                scale.resumeScanning()
+                // Date of birth or sex may have changed in Health meanwhile.
+                updateScaleUserProfile()
+            }
             // Leave a connection request pending so the next step-on wakes the
             // app and records the weigh-in without it being opened. See #19.
             if phase == .background { scale.armPendingConnect() }
         }
+        .onChange(of: heightCm) { _, _ in updateScaleUserProfile() }
         .onChange(of: autoSaveToHealth) { _, isOn in
             // Flipping the in-app toggle on does nothing unless iOS will accept the
             // writes. HealthKit's permission sheet appears only once, ever, so if it
@@ -213,6 +226,7 @@ struct ContentView: View {
             if heightCm == 0, let h = await health.latestHeightCm() {
                 heightCm = h
             }
+            updateScaleUserProfile()
         }
     }
 

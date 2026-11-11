@@ -338,6 +338,61 @@ enum StandardScaleProfile {
         }
     }
 
+    // MARK: - User Data characteristics (0x181C)
+
+    /// What the scale's body composition model needs to know about its user.
+    /// Without it the X assumes 1.70 m and reads fat % far off (#60).
+    struct UserProfile: Equatable {
+        var heightCm: Double?
+        var dateOfBirth: DateComponents?
+        var sex: Sex?
+
+        enum Sex: UInt8 { case male = 0, female = 1, unspecified = 2 }
+    }
+
+    enum UserData {
+        static let writableUUIDs: Set<String> = ["2A8E", "2A85", "2A80", "2A8C"]
+
+        /// Height (0x2A8E): uint16, 0.01 m units.
+        static func height(cm: Double) -> Data? {
+            guard (50...250).contains(cm) else { return nil }
+            let raw = UInt16(cm.rounded())
+            return Data([UInt8(raw & 0xFF), UInt8(raw >> 8)])
+        }
+
+        /// Date of Birth (0x2A85): year(2) month day.
+        static func dateOfBirth(_ c: DateComponents) -> Data? {
+            guard let year = c.year, let month = c.month, let day = c.day,
+                  (1900...2100).contains(year), (1...12).contains(month), (1...31).contains(day) else { return nil }
+            let y = UInt16(year)
+            return Data([UInt8(y & 0xFF), UInt8(y >> 8), UInt8(month), UInt8(day)])
+        }
+
+        /// Age (0x2A80): uint8 years.
+        static func age(dateOfBirth c: DateComponents, now: Date = Date(), calendar: Calendar = gregorian) -> Data? {
+            guard let birth = calendar.date(from: c),
+                  let years = calendar.dateComponents([.year], from: birth, to: now).year,
+                  (5...120).contains(years) else { return nil }
+            return Data([UInt8(years)])
+        }
+
+        /// Gender (0x2A8C): 0 male, 1 female, 2 unspecified.
+        static func gender(_ sex: UserProfile.Sex) -> Data { Data([sex.rawValue]) }
+
+        /// The writes for a profile, as (characteristic UUID string, value):
+        /// only the fields the profile has.
+        static func writes(for profile: UserProfile, now: Date = Date()) -> [(uuid: String, value: Data)] {
+            var out: [(String, Data)] = []
+            if let cm = profile.heightCm, let v = height(cm: cm) { out.append(("2A8E", v)) }
+            if let dob = profile.dateOfBirth {
+                if let v = dateOfBirth(dob) { out.append(("2A85", v)) }
+                if let v = age(dateOfBirth: dob, now: now) { out.append(("2A80", v)) }
+            }
+            if let sex = profile.sex { out.append(("2A8C", gender(sex))) }
+            return out
+        }
+    }
+
     // MARK: - Helpers
 
     private static func u16(_ b: [UInt8], _ i: Int) -> UInt16 { UInt16(b[i]) | (UInt16(b[i + 1]) << 8) }

@@ -233,4 +233,30 @@ struct LibreBaseTests {
         #expect(Profile.parseBodyComposition(frames: [head, tail, head, tail], weightKg: 84.95,
                                              resolution: x, dialect: .qardioX)?.heartRateBpm == 107)
     }
+
+    // MARK: - User Data writes (QardioBase X, issue #60)
+
+    @Test func encodesUserDataWrites() {
+        typealias UserData = StandardScaleProfile.UserData
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        let now = utc.date(from: DateComponents(year: 2026, month: 11, day: 8))!
+        let birth = DateComponents(year: 1985, month: 6, day: 15)
+
+        #expect(UserData.height(cm: 187) == Data([0xBB, 0x00]))
+        #expect(UserData.height(cm: 186.6) == Data([0xBB, 0x00]))
+        #expect(UserData.height(cm: 0) == nil)
+        #expect(UserData.dateOfBirth(birth) == Data([0xC1, 0x07, 6, 15]))
+        #expect(UserData.dateOfBirth(DateComponents(year: 1985)) == nil)
+        #expect(UserData.age(dateOfBirth: birth, now: now, calendar: utc) == Data([41]))
+        #expect(UserData.gender(.female) == Data([1]))
+
+        let profile = StandardScaleProfile.UserProfile(heightCm: 187, dateOfBirth: birth, sex: .male)
+        let writes = UserData.writes(for: profile, now: now)
+        #expect(writes.map(\.uuid) == ["2A8E", "2A85", "2A80", "2A8C"])
+        #expect(writes.last?.value == Data([0]))
+        // Only what's known is written.
+        #expect(UserData.writes(for: .init(heightCm: nil, dateOfBirth: nil, sex: nil)).isEmpty)
+        #expect(UserData.writes(for: .init(heightCm: 170, dateOfBirth: nil, sex: nil)).map(\.uuid) == ["2A8E"])
+    }
 }
