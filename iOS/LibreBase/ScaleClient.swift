@@ -168,6 +168,11 @@ final class ScaleClient: NSObject, ObservableObject {
     /// both the `00 00 05 06` marker and the `control = 06` done state, so it can
     /// decode more than once per session. Reset when a new measurement starts.
     private var didFinalizeSession = false
+    /// One retry per weigh-in for a result read that fails right after "done".
+    /// Cancelled whenever the connection or weigh-in changes, so it can't read
+    /// a later session's result.
+    private var didRetryResultRead = false
+    private var resultRetryWorkItem: DispatchWorkItem?
 
     // Connect timeout
     private var connectTimeoutWorkItem: DispatchWorkItem?
@@ -657,8 +662,10 @@ final class ScaleClient: NSObject, ObservableObject {
         switch v {
         case 0x00: return "idle"
         case 0x01: return "config"
+        case 0x02: return "ready"
         case 0x03: return "measuring"
         case 0x06: return "done"
+        case 0x0c: return "sleeping"
         default:   return String(format: "0x%02x", v)
         }
     }
@@ -762,6 +769,8 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         sessionActive = false
         didFinalizeSession = false
         qardioMeasurementActive = false
+        didRetryResultRead = false
+        resultRetryWorkItem?.cancel()
         status = "Connected — discovering…"
         compositionFrames.removeAll()
         continuationAccepted = nil
@@ -801,6 +810,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         qardioEngineeringChar = nil
         qardioMeasurementChar = nil
         qardioMeasurementActive = false
+        resultRetryWorkItem?.cancel()
         bodyCompChar = nil
         userControlPointChar = nil
         continuationAccepted = nil
@@ -882,6 +892,11 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
                 // State machine (00 idle, 03 measuring, 06 done) — drives the
                 // result read. Required: without this notify the scale is silent.
                 p.setNotifyValue(true, for: ch)
+                // Also read the current state once: the scale can finish a
+                // weigh-in while iOS is still connecting, and then the "done"
+                // notification is never seen. A read answering 06 lands in the
+                // same handler and reads that result.
+                if ch.properties.contains(.read) { p.readValue(for: ch) }
             case qbMeasure:
                 qardioEngineeringChar = ch
                 if ch.properties.contains(.notify) || ch.properties.contains(.indicate) {
@@ -916,6 +931,22 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     func peripheral(_ p: CBPeripheral, didUpdateValueFor ch: CBCharacteristic, error: Error?) {
+        if ch.uuid == qbResult, error != nil {
+            // Expected: the result is read on two triggers per weigh-in, and once
+            // it has been read the scale fails further reads. Only a failure
+            // before we have the result is worth one more try.
+            log("qardio measurement read failed: \(error?.localizedDescription ?? "?")")
+            if !didFinalizeSession, !didRetryResultRead {
+                didRetryResultRead = true
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self, !self.didFinalizeSession else { return }
+                    self.readQardioMeasurementJSON()
+                }
+                resultRetryWorkItem = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+            }
+            return
+        }
         guard error == nil, let data = ch.value else {
             switch ch.uuid {
             case weightFeature where !didRetryWeightFeature:
@@ -943,6 +974,8 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
                 qardioMeasurementActive = true
                 sessionActive = true
                 didFinalizeSession = false
+                didRetryResultRead = false
+                resultRetryWorkItem?.cancel()
                 status = "Measuring…"
             case 0x06:
                 qardioMeasurementActive = false
@@ -979,7 +1012,9 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         case userControlPoint:
             handleUserControlPoint(data, from: p)
         case qbResult:
-            parseQardioMeasurementJSON(data)
+            // The scale may pad the JSON with NULs, which JSONSerialization
+            // rejects as trailing garbage.
+            parseQardioMeasurementJSON(Data(data.reversed().drop(while: { $0 == 0 }).reversed()))
         case batteryLevel:
             if !data.isEmpty {
                 let level = Int(data[0])
