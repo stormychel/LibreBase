@@ -73,7 +73,7 @@ struct ContentView: View {
     }
 
     /// What a User Data scale (QardioBase X) is told about its user after
-    /// consent (#60). Takes effect at the next connection.
+    /// consent (#60). Written at once if the scale has already consented.
     private func updateScaleUserProfile() {
         let (birth, sex) = health.characteristics()
         scale.userProfile = StandardScaleProfile.UserProfile(heightCm: heightCm > 0 ? heightCm : nil,
@@ -149,7 +149,11 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             // iOS suspends BLE scans in the background; re-arm one on return so the
             // scale reconnects on its own without the user tapping Reconnect.
-            if phase == .active { scale.resumeScanning() }
+            if phase == .active {
+                scale.resumeScanning()
+                // Date of birth or sex may have changed in Health meanwhile.
+                updateScaleUserProfile()
+            }
         }
         .onChange(of: heightCm) { _, _ in updateScaleUserProfile() }
         .onChange(of: autoSaveToHealth) { _, isOn in

@@ -59,7 +59,15 @@ final class ScaleClient: NSObject, ObservableObject {
     var onFinalReading: ((ScaleReading) -> Void)?
     /// Written to a User Data scale (QardioBase X) after each consent, so its
     /// body composition uses the real height, age and sex (#60).
-    var userProfile: StandardScaleProfile.UserProfile?
+    var userProfile: StandardScaleProfile.UserProfile? {
+        didSet {
+            // Set after consent (Health answered late, or height edited): write now.
+            guard userProfile != oldValue, isConsented, let peripheral else { return }
+            writeUserProfile(to: peripheral)
+        }
+    }
+    /// Consent succeeded on the current connection.
+    private var isConsented = false
 
     // MARK: - BLE
     /// Created on demand by `start()` rather than in `init`: building the central
@@ -418,6 +426,7 @@ final class ScaleClient: NSObject, ObservableObject {
             beginUserConsent(on: p)
         case (ControlPoint.consent, true):
             consentTimeoutWorkItem?.cancel()
+            isConsented = true
             writeUserProfile(to: p)
             status = "Connected — step on the scale"
         case (ControlPoint.consent, false) where !didReregisterUser && storedScaleUser(for: p) != nil:
@@ -594,6 +603,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         consentStarted = false
         didReregisterUser = false
         userDataChars.removeAll()
+        isConsented = false
         weightResolution = nil
         compositionResolution = nil
         awaitingWeightFeature = false
@@ -624,6 +634,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         bodyCompChar = nil
         userControlPointChar = nil
         userDataChars.removeAll()
+        isConsented = false
         weightResolution = nil
         compositionResolution = nil
         awaitingWeightFeature = false
@@ -682,6 +693,9 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
                 && StandardScaleProfile.UserData.writableUUIDs.contains(ch.uuid.uuidString):
                 userDataChars[ch.uuid] = ch
                 if reconMode, ch.properties.contains(.read) { p.readValue(for: ch) }
+                if reconMode, ch.properties.contains(.notify) || ch.properties.contains(.indicate) {
+                    p.setNotifyValue(true, for: ch)
+                }
             case currentTime:
                 // A scale whose clock was never set (the Qardio app used to do
                 // it) reads 1970; some refuse to measure until it is written.
