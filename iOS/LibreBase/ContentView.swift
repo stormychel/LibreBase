@@ -14,6 +14,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("autoSaveToHealth") private var autoSaveToHealth = true
     @AppStorage("heightCm") private var heightCm = 0.0
+    @AppStorage(WeightUnitSetting.storageKey) private var weightUnitSetting = WeightUnitSetting.automatic
     @State private var showHeightSheet = false
     @State private var showSettings = false
     @State private var showReportScale = false
@@ -27,19 +28,26 @@ struct ContentView: View {
 
     /// Show height in feet/inches in imperial regions, centimeters otherwise.
     /// Screenshot mode can pin this so the kg/lb scenes render deterministically.
+    /// Height (cm vs ft/in) follows the region.
     private var useMetric: Bool {
         ScreenshotMode.forcedUseMetric ?? (Locale.current.measurementSystem == .metric)
+    }
+
+    /// Weight follows its own setting (#57): Canadians and Brits weigh in pounds
+    /// on a metric locale.
+    private var weightInKg: Bool {
+        ScreenshotMode.forcedUseMetric ?? weightUnitSetting.showsKilograms(regionIsMetric: useMetric)
     }
 
     // Weight is always stored in kilograms; display it in the user's preferred
     // unit (pounds in imperial regions). Saving to Health is unaffected.
     private var weightValue: String {
         guard let r = scale.lastReading else { return "—" }
-        if useMetric { return String(format: "%.1f", r.weightKg) }
+        if weightInKg { return String(format: "%.1f", r.weightKg) }
         return String(format: "%.1f", r.weightKg / 0.45359237)
     }
 
-    private var weightUnit: String { useMetric ? "kg" : "lb" }
+    private var weightUnit: String { weightInKg ? "kg" : "lb" }
 
     // BMI is computed in-app from a locally stored height. We deliberately ignore
     // the scale's own BMI: it depends on a height set via the (discontinued)
@@ -410,6 +418,15 @@ struct ContentView: View {
 
             Divider().padding(.leading, 16)
 
+            Picker("Weight unit", selection: $weightUnitSetting) {
+                ForEach(WeightUnitSetting.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
+            .tint(.secondary)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 16)
+
+            Divider().padding(.leading, 16)
+
             // Height — used to compute BMI in-app (the scale's BMI can't be
             // trusted without the Qardio app). Tapping opens a unit-aware
             // wheel picker; the choice is written back to Apple Health.
@@ -528,5 +545,28 @@ struct ContentView: View {
             }
         }
         .presentationDetents([.medium])
+    }
+}
+
+/// Display unit for weight (#57). Storage and Apple Health stay in kg.
+enum WeightUnitSetting: String, CaseIterable {
+    case automatic, kilograms, pounds
+
+    static let storageKey = "weightUnit"
+
+    var label: String {
+        switch self {
+        case .automatic: "Automatic"
+        case .kilograms: "kg"
+        case .pounds: "lb"
+        }
+    }
+
+    func showsKilograms(regionIsMetric: Bool) -> Bool {
+        switch self {
+        case .automatic: regionIsMetric
+        case .kilograms: true
+        case .pounds: false
+        }
     }
 }

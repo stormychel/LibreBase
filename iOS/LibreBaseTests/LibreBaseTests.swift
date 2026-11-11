@@ -16,4 +16,14 @@ struct LibreBaseTests {
         // https://developer.apple.com/documentation/testing
     }
 
+
+    // MARK: - Weight unit setting (#57)
+
+    @Test func weightUnitSettingOverridesRegion() {
+        #expect(WeightUnitSetting.automatic.showsKilograms(regionIsMetric: true))
+        #expect(!WeightUnitSetting.automatic.showsKilograms(regionIsMetric: false))
+        #expect(!WeightUnitSetting.pounds.showsKilograms(regionIsMetric: true))
+        #expect(WeightUnitSetting.kilograms.showsKilograms(regionIsMetric: false))
+        #expect(WeightUnitSetting(rawValue: "pounds") == .pounds)
+    }
 }

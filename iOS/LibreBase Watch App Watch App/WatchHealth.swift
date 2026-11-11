@@ -29,6 +29,14 @@ final class WatchHealth: ObservableObject {
         await latest(.bodyMass).map { ($0.quantity.doubleValue(for: .gramUnit(with: .kilo)), $0.endDate) }
     }
 
+    /// Whether the Health app shows weight in metric units, or nil if unknown.
+    func bodyMassUnitIsMetric() async -> Bool? {
+        let type = HKQuantityType(.bodyMass)
+        guard HKHealthStore.isHealthDataAvailable(),
+              let unit = try? await store.preferredUnits(for: [type])[type] else { return nil }
+        return unit == .gramUnit(with: .kilo) || unit == .gram()
+    }
+
     /// Most recent height sample in centimeters, or nil.
     func latestHeightCm() async -> Double? {
         await latest(.height)?.quantity.doubleValue(for: .meterUnit(with: .centi))
