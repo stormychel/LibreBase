@@ -19,8 +19,24 @@ struct ReportScaleView: View {
     @State private var started = false
     @State private var showMail = false
     @State private var mailUnavailable = false
+    @State private var model: ScaleModelAnswer?
+    @State private var connected: YesNo?
+    @State private var showedWeight: YesNo?
+    /// The scale gets a few seconds to wake before "not found" is shown.
+    @State private var scanGracePassed = false
+
+    private var summary: CaptureSummary { CaptureSummary(log: scale.reconLog) }
+    /// The form must be complete: blank answers made reports unusable (#56, #62).
+    private var canSend: Bool {
+        !scale.reconLog.isEmpty && model != nil && connected != nil && showedWeight != nil
+    }
 
     private var capturedLines: Int { scale.reconLog.count }
+
+    /// The status strings are localized, so compare against the localized text.
+    private var bluetoothDown: Bool {
+        [String(localized: "Bluetooth unavailable"), String(localized: "Bluetooth not available")].contains(scale.status)
+    }
 
     var body: some View {
         NavigationStack {
@@ -29,6 +45,7 @@ struct ReportScaleView: View {
                     header
                     if started {
                         captureCard
+                        questionsCard
                         sendCard
                     } else {
                         startCard
@@ -86,6 +103,10 @@ struct ReportScaleView: View {
                 scale.reconMode = true
                 scale.startConnect()
                 withAnimation { started = true }
+                Task {
+                    try? await Task.sleep(for: .seconds(10))
+                    withAnimation { scanGracePassed = true }
+                }
             } label: {
                 Label("Start diagnostic capture", systemImage: "record.circle")
                     .font(.headline)
@@ -105,6 +126,14 @@ struct ReportScaleView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if scanGracePassed, !summary.qardioFound, !bluetoothDown {
+                // Two blank reports had nothing but a scan list (#62).
+                Label("No Qardio scale found yet. Step on the scale to wake it, and close the Qardio app on every phone — the scale talks to one app at a time.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             // Rule out the cheapest cause of a silent scale before a report is sent.
             if let pct = scale.batteryLevelPct, pct <= 20 {
                 Label("Scale battery is low (\(pct)%). A weak battery can stop the scale sending a weight — charge or replace it first if you can.",
@@ -127,6 +156,32 @@ struct ReportScaleView: View {
         }
     }
 
+    private var questionsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("About your scale")
+                .font(.headline)
+            Picker("Scale model", selection: $model) {
+                Text("Choose…").tag(ScaleModelAnswer?.none)
+                ForEach(ScaleModelAnswer.allCases, id: \.self) { Text($0.label).tag(Optional($0)) }
+            }
+            .pickerStyle(.menu)
+            .tint(Brand.teal)
+            answerRow("Did LibreBase connect to the scale?", $connected)
+            answerRow("Did LibreBase show a weight?", $showedWeight)
+        }
+    }
+
+    private func answerRow(_ question: String, _ answer: Binding<YesNo?>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(question)
+                .font(.subheadline)
+            Picker(question, selection: answer) {
+                ForEach(YesNo.allCases, id: \.self) { Text($0.rawValue).tag(Optional($0)) }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+
     private var sendCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Then send it over")
@@ -140,11 +195,17 @@ struct ReportScaleView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
                     .background(
-                        scale.reconLog.isEmpty ? AnyShapeStyle(Color.secondary.opacity(0.5)) : AnyShapeStyle(Brand.gradient),
+                        canSend ? AnyShapeStyle(Brand.gradient) : AnyShapeStyle(Color.secondary.opacity(0.5)),
                         in: RoundedRectangle(cornerRadius: 14, style: .continuous)
                     )
             }
-            .disabled(scale.reconLog.isEmpty)
+            .disabled(!canSend)
+            if !canSend {
+                Text(scale.reconLog.isEmpty ? "Step on the scale first."
+                                            : "Answer the questions above to send.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -171,8 +232,10 @@ struct ReportScaleView: View {
         """
         I'd like to help add support for my Qardio scale.
 
-        My scale model (please fill in): \u{0020}
-        Did LibreBase connect / show a weight?: \u{0020}
+        My scale model: \(model?.label ?? "—")
+        Did LibreBase connect?: \(connected?.rawValue ?? "—")
+        Did LibreBase show a weight?: \(showedWeight?.rawValue ?? "—")
+        Detected in capture: \(summary.description)
 
         — Diagnostic info —
         \(Constants.versionLabel)
@@ -196,6 +259,50 @@ struct ReportScaleView: View {
             guard let value = element.value as? Int8, value != 0 else { return }
             result.append(Character(UnicodeScalar(UInt8(value))))
         }
+    }
+}
+
+/// The scale models a report can name.
+enum ScaleModelAnswer: CaseIterable {
+    case original, base2, baseX, notSure
+
+    var label: String {
+        switch self {
+        case .original: "QardioBase (original)"
+        case .base2: "QardioBase 2"
+        case .baseX: "QardioBase X"
+        case .notSure: "Not sure"
+        }
+    }
+}
+
+enum YesNo: String, CaseIterable { case yes = "Yes", no = "No" }
+
+/// What a Recon capture shows on its own, so a report says it even when the
+/// sender's answers don't (#56, #62).
+struct CaptureSummary: Equatable {
+    var qardioFound = false
+    /// Model Number String, decoded from its hex bytes ("B100", "B200", "BX00").
+    var modelNumber: String?
+    var gotMeasurement = false
+
+    init(log: [String]) {
+        for line in log {
+            if line.hasPrefix("found peripheral:"), line.localizedCaseInsensitiveContains("qardio") { qardioFound = true }
+            if line.hasPrefix("<- Model Number String: ") {
+                let bytes = line.dropFirst("<- Model Number String: ".count).split(separator: " ").compactMap { UInt8($0, radix: 16) }
+                let decoded = String(bytes: bytes.filter { $0 != 0 }, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if let decoded, !decoded.isEmpty { modelNumber = decoded }
+                qardioFound = true
+            }
+            if line.hasPrefix("<- 2A9D:") || line.hasPrefix("qardio measurement JSON decoded") { gotMeasurement = true }
+        }
+    }
+
+    var description: String {
+        guard qardioFound else { return "no Qardio scale found" }
+        return "model \(modelNumber ?? "unknown"), \(gotMeasurement ? "measurement received" : "no measurement")"
     }
 }
 
