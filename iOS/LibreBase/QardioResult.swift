@@ -14,9 +14,11 @@ struct BodyComposition: Equatable {
     var waterPct: Double?
     var musclePct: Double?
     var bonePct: Double?
+    /// Measured by the QardioBase X during a weigh-in (#59).
+    var heartRateBpm: Double?
 
     var isEmpty: Bool {
-        fatPct == nil && waterPct == nil && musclePct == nil && bonePct == nil
+        fatPct == nil && waterPct == nil && musclePct == nil && bonePct == nil && heartRateBpm == nil
     }
 }
 

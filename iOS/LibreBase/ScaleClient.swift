@@ -41,6 +41,8 @@ struct ScaleReading {
 /// `reconLog` — that first real-device run is the README's Phase-1 recon and
 /// produces the bytes needed to finalize the parser.
 final class ScaleClient: NSObject, ObservableObject {
+    static let shared = ScaleClient()
+
     // MARK: - UI state
     @Published var status = "Searching for scale…"
     @Published var lastReading: ScaleReading?
@@ -100,6 +102,13 @@ final class ScaleClient: NSObject, ObservableObject {
     /// for part of the next one.
     private var consumedCompositionFrames: Set<Data> = []
     private var consumedCompositionAt = Date.distantPast
+    /// Set after a Body Composition frame that awaits a continuation: whether
+    /// that next frame is kept (true) or dropped with its head (false).
+    private var continuationAccepted: Bool?
+    /// The X splits composition over two frames its own way (#59).
+    private var compositionDialect: StandardScaleProfile.Dialect = .standard
+    /// Advertised name, for when the GAP name isn't cached yet.
+    private var discoveredName: String?
     /// One consent attempt per connection, plus at most one re-registration.
     private var consentStarted = false
     private var didReregisterUser = false
@@ -160,6 +169,18 @@ final class ScaleClient: NSObject, ObservableObject {
     // Connect timeout
     private var connectTimeoutWorkItem: DispatchWorkItem?
 
+    // Background weigh-ins (#19). With the `bluetooth-central` background mode a
+    // pending connect outlives the app being suspended, and state restoration
+    // lets iOS relaunch the app for it after the system has terminated it.
+    private let restoreIdentifier = "com.michelstorms.LibreBase.scale"
+    private let knownScaleKey = "knownScaleIdentifier"
+    /// True between `willRestoreState` and the first `.poweredOn`: the restored
+    /// peripheral must be picked up as-is, not torn down by `startConnect`.
+    private var restoredFromBackground = false
+    /// Set when a pending connect is asked for while a deliberate teardown is
+    /// still in flight; honoured once that teardown's disconnect arrives.
+    private var rearmAfterTeardown = false
+
     // MARK: - Public API
 
     /// Create the Bluetooth central — which is what raises the system Bluetooth
@@ -169,8 +190,33 @@ final class ScaleClient: NSObject, ObservableObject {
     /// `.poweredOn`, `centralManagerDidUpdateState` kicks off the first connect.
     func start() {
         if central == nil {
-            central = CBCentralManager(delegate: self, queue: .main)
+            central = CBCentralManager(delegate: self, queue: .main,
+                                       options: [CBCentralManagerOptionRestoreIdentifierKey: restoreIdentifier])
         }
+    }
+
+    /// Queue a connection request to the scale we last used. CoreBluetooth keeps
+    /// it pending with no timeout — also while the app is suspended — and
+    /// completes it the moment the scale wakes on a step-on. Scanning can't do
+    /// this in the background: iOS only scans for advertised service UUIDs there,
+    /// and the QardioBase advertises none.
+    func armPendingConnect() {
+        guard let central, central.state == .poweredOn, !isConnected else { return }
+        guard let p = peripheral ?? knownPeripheral(in: central) else { return }
+        peripheral = p
+        p.delegate = self
+        // A connect issued while Retry's cancel is still completing could be
+        // swallowed by it; wait for didDisconnectPeripheral instead.
+        if intentionalDisconnect, p.state == .disconnecting {
+            rearmAfterTeardown = true
+            return
+        }
+        central.connect(p, options: nil)
+    }
+
+    private func knownPeripheral(in central: CBCentralManager) -> CBPeripheral? {
+        guard let id = UserDefaults.standard.string(forKey: knownScaleKey).flatMap(UUID.init) else { return nil }
+        return central.retrievePeripherals(withIdentifiers: [id]).first
     }
 
     /// Populate a believable weigh-in for App Store screenshots (see
@@ -218,6 +264,9 @@ final class ScaleClient: NSObject, ObservableObject {
         // Drop any pending auto-reconnect so we don't end up with two connection
         // attempts to the same peripheral when the user taps Retry. Mark it
         // intentional so didDisconnectPeripheral doesn't immediately re-queue it.
+        let hadPeripheral = peripheral != nil
+        // This attempt owns the connection now; drop any deferred re-arm.
+        rearmAfterTeardown = false
         if let peripheral {
             intentionalDisconnect = true
             central.cancelPeripheralConnection(peripheral)
@@ -230,6 +279,11 @@ final class ScaleClient: NSObject, ObservableObject {
         // UUID, so a service-filtered scan never surfaces it. We match by name
         // hint / advertised standard service in didDiscover instead.
         central.scanForPeripherals(withServices: nil, options: nil)
+        // Fresh launch with a scale we already know: also queue a pending connect,
+        // so a weigh-in is caught even if the app is backgrounded before the scan
+        // finds the scale. (Not after a Retry — that just cancelled this very
+        // request and relies on the scan above.)
+        if !hadPeripheral { armPendingConnect() }
 
         let work = DispatchWorkItem { [weak self] in
             guard let self = self, !self.isConnected else { return }
@@ -284,6 +338,7 @@ final class ScaleClient: NSObject, ObservableObject {
         guard isValidWeight(reading.weightKg) else {
             sessionActive = false
             compositionFrames.removeAll()
+            continuationAccepted = nil
             status = "Measurement invalid — please step on the scale again."
             return
         }
@@ -292,6 +347,7 @@ final class ScaleClient: NSObject, ObservableObject {
         consumedCompositionFrames = Set(compositionFrames.map(\.data))
         consumedCompositionAt = Date()
         compositionFrames.removeAll()
+        continuationAccepted = nil
         status = "Weigh-in complete"
         onFinalReading?(reading)
     }
@@ -310,6 +366,7 @@ final class ScaleClient: NSObject, ObservableObject {
         // this phone registered must not land in this phone's Health record.
         if isForAnotherScaleUser(weight.userIndex, on: p) {
             compositionFrames.removeAll()
+            continuationAccepted = nil
             status = "Weigh-in for another scale user — not saved"
             return
         }
@@ -344,8 +401,27 @@ final class ScaleClient: NSObject, ObservableObject {
     }
 
     private func parseBodyComposition(_ data: Data, from p: CBPeripheral) {
-        guard !isForAnotherScaleUser(StandardScaleProfile.bodyCompositionUserIndex(data), on: p),
-              !isRetransmittedComposition(data) else { return }
+        // A flagless continuation (#59) has no user index of its own: it shares
+        // the fate of the frame it continues. A frame that is itself a head
+        // (e.g. a retransmission) isn't one.
+        if let accepted = continuationAccepted,
+           !StandardScaleProfile.awaitsContinuation(data, dialect: compositionDialect) {
+            continuationAccepted = nil
+            guard accepted else { return }
+        } else {
+            // A truncated multiple-packet head is malformed for a spec scale: it
+            // is the X's split, whatever the scale is called.
+            if compositionDialect == .standard, StandardScaleProfile.awaitsContinuation(data, dialect: .qardioX) {
+                log("body composition: X-style split frame — using the QardioBase X layout")
+                compositionDialect = .qardioX
+            }
+            let accepted = !isForAnotherScaleUser(StandardScaleProfile.bodyCompositionUserIndex(data), on: p)
+                && !isRetransmittedComposition(data)
+            if StandardScaleProfile.awaitsContinuation(data, dialect: compositionDialect) {
+                continuationAccepted = accepted
+            }
+            guard accepted else { return }
+        }
         compositionFrames.append((data, Date()))
         if sessionActive, let weightKg = lastReading?.weightKg {
             lastReading?.composition = currentComposition(weightKg: weightKg)
@@ -360,7 +436,8 @@ final class ScaleClient: NSObject, ObservableObject {
         let cutoff = Date().addingTimeInterval(-10)
         compositionFrames.removeAll { $0.receivedAt < cutoff }
         return StandardScaleProfile.parseBodyComposition(frames: compositionFrames.map(\.data), weightKg: weightKg,
-                                                         resolution: compositionResolution ?? .standard)
+                                                         resolution: compositionResolution ?? .standard,
+                                                         dialect: compositionDialect)
     }
 
     /// The Weight Scale Feature read finished (or failed): decode what waited.
@@ -552,10 +629,41 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         switch central.state {
         case .poweredOn:
-            startConnect()
+            if restoredFromBackground, let p = peripheral {
+                // Relaunched in the background for the scale: carry on with the
+                // connection iOS handed back instead of resetting it.
+                restoredFromBackground = false
+                if p.state == .connected {
+                    centralManager(central, didConnect: p)
+                } else {
+                    central.connect(p, options: nil)
+                }
+            } else {
+                restoredFromBackground = false
+                startConnect()
+            }
         default:
             status = "Bluetooth not available"
             isConnected = false
+        }
+    }
+
+    func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        guard let p = (dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral])?.first else { return }
+        peripheral = p
+        p.delegate = self
+        restoredFromBackground = true
+        // The scale may already be mid-weigh-in, with its notifications still
+        // subscribed: take the cached characteristics now so a result-ready
+        // notification that beats rediscovery can still read the result.
+        for ch in (p.services ?? []).flatMap({ $0.characteristics ?? [] }) {
+            switch ch.uuid {
+            case weightMeasurement: weightChar = ch
+            case qbMeasure: qardioEngineeringChar = ch
+            case qbResult: qardioMeasurementChar = ch
+            case batteryLevel: batteryChar = ch
+            default: break
+            }
         }
     }
 
@@ -572,6 +680,10 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         let advertisesQardioBase =
             (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID])?.contains(qbService) ?? false
 
+        // One scale at a time: a pending connect can complete while a scan is
+        // still running, and a second scale in range must not displace it.
+        guard !isConnected else { return }
+
         // Accept by name hint or by advertised standard service.
         guard advName.localizedCaseInsensitiveContains(nameHint) || advertisesWeightScale || advertisesQardioBase else {
             return
@@ -581,6 +693,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         // scale sleeps before the connect completes, the timeout fires and the
         // pending connect stays queued to finish when it wakes.
         central.stopScan()
+        discoveredName = advName.isEmpty ? nil : advName
         status = "Connecting…"
         self.peripheral = p
         p.delegate = self
@@ -590,13 +703,17 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManager(_ central: CBCentralManager, didConnect p: CBPeripheral) {
         isConnected = true
         connectTimeoutWorkItem?.cancel()
+        central.stopScan()
+        UserDefaults.standard.set(p.identifier.uuidString, forKey: knownScaleKey)
         // Fresh connection → clean session state so the next step-on records.
         intentionalDisconnect = false
+        rearmAfterTeardown = false
         sessionActive = false
         didFinalizeSession = false
         qardioMeasurementActive = false
         status = "Connected — discovering…"
         compositionFrames.removeAll()
+        continuationAccepted = nil
         consumedCompositionFrames.removeAll()
         finalizedWeightFrame = nil
         finalizedWeightTimestamp = nil
@@ -606,6 +723,8 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         isConsented = false
         weightResolution = nil
         compositionResolution = nil
+        let name = p.name ?? discoveredName ?? ""
+        compositionDialect = name.localizedCaseInsensitiveContains("QardioBase X") ? .qardioX : .standard
         awaitingWeightFeature = false
         didRetryWeightFeature = false
         pendingWeightFrames.removeAll()
@@ -633,6 +752,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         qardioMeasurementActive = false
         bodyCompChar = nil
         userControlPointChar = nil
+        continuationAccepted = nil
         userDataChars.removeAll()
         isConsented = false
         weightResolution = nil
@@ -646,6 +766,10 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         // by re-queuing a connect to the peripheral we just dropped.
         if intentionalDisconnect {
             intentionalDisconnect = false
+            if rearmAfterTeardown {
+                rearmAfterTeardown = false
+                central.connect(p, options: nil)
+            }
             return
         }
 
