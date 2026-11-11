@@ -297,8 +297,9 @@ final class ScaleClient: NSObject, ObservableObject {
         else { return }
 
         // Not attributed to anyone: possibly this phone's owner, before consent.
-        if weight.userIndex == StandardScaleProfile.unknownUser, storedScaleUser(for: p) != nil {
-            compositionFrames.removeAll()
+        // Gated on the User Control Point, not on a stored user: a scale that
+        // refused registration may still replay, and those mustn't be saved.
+        if weight.userIndex == StandardScaleProfile.unknownUser, userControlPointChar != nil {
             offerUnclaimed(weight)
             return
         }
@@ -353,6 +354,10 @@ final class ScaleClient: NSObject, ObservableObject {
     /// Keys of unattributed weigh-ins already offered and answered, so a scale
     /// that replays them on every connection doesn't ask again.
     static let handledUnclaimedKey = "handledUnclaimedWeighIns"
+
+    static func unclaimedKey(_ reading: ScaleReading) -> String {
+        unclaimedKey(kg: reading.weightKg, timestamp: reading.timestamp)
+    }
 
     static func unclaimedKey(kg: Double, timestamp: Date) -> String {
         "\(Int((kg * 100).rounded()))@\(Int(timestamp.timeIntervalSince1970))"

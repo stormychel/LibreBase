@@ -116,7 +116,7 @@ struct ContentView: View {
                     statusPills
                     heroCard
 
-                    ForEach(scale.unclaimedReadings, id: \.timestamp) { reading in
+                    ForEach(scale.unclaimedReadings, id: \.unclaimedID) { reading in
                         unclaimedCard(reading)
                     }
 
@@ -312,10 +312,11 @@ struct ContentView: View {
     }
 
     private func claim(_ reading: ScaleReading) {
-        scale.resolveUnclaimed(reading)
         Task { @MainActor in
             do {
                 try await health.saveWeight(kg: reading.weightKg, date: reading.timestamp)
+                // Only now: a failed save keeps the card so it can be retried.
+                scale.resolveUnclaimed(reading)
                 scale.status = "Saved to Apple Health"
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
             } catch {
@@ -656,4 +657,9 @@ struct ContentView: View {
         }
         .presentationDetents([.medium])
     }
+}
+
+extension ScaleReading {
+    /// Weight + scale timestamp: one per unattributed weigh-in (#61).
+    var unclaimedID: String { ScaleClient.unclaimedKey(self) }
 }
