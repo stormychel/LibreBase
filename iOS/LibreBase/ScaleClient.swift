@@ -342,7 +342,10 @@ final class ScaleClient: NSObject, ObservableObject {
     }
 
     private func parseBodyComposition(_ data: Data, from p: CBPeripheral) {
-        guard !isForAnotherScaleUser(StandardScaleProfile.bodyCompositionUserIndex(data), on: p),
+        let compositionUser = StandardScaleProfile.bodyCompositionUserIndex(data)
+        // An unattributed replay's composition must not join a live weigh-in (#61).
+        if compositionUser == StandardScaleProfile.unknownUser, userControlPointChar != nil { return }
+        guard !isForAnotherScaleUser(compositionUser, on: p),
               !isRetransmittedComposition(data) else { return }
         compositionFrames.append((data, Date()))
         if sessionActive, let weightKg = lastReading?.weightKg {

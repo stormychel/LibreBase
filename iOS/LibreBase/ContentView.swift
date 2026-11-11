@@ -19,6 +19,8 @@ struct ContentView: View {
     /// Mirrors `ScaleUserBinding.knownUsers()`; refreshed after each weigh-in.
     @State private var knownScaleUsers: [String: String] = ScaleUserBinding.knownUsers()
     @State private var showHeightSheet = false
+    /// Unattributed weigh-ins being saved (#61).
+    @State private var claiming: Set<String> = []
     @State private var showSettings = false
     @State private var showReportScale = false
     @State private var showHealthDeniedAlert = false
@@ -299,6 +301,7 @@ struct ContentView: View {
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Save to Health") { claim(reading) }
+                    .disabled(claiming.contains(reading.unclaimedID))
                     .buttonStyle(.borderedProminent)
                     .tint(Brand.teal)
                 Button("Not me") { scale.resolveUnclaimed(reading) }
@@ -312,7 +315,10 @@ struct ContentView: View {
     }
 
     private func claim(_ reading: ScaleReading) {
+        // A second tap while saving would write a duplicate sample.
+        guard claiming.insert(reading.unclaimedID).inserted else { return }
         Task { @MainActor in
+            defer { claiming.remove(reading.unclaimedID) }
             do {
                 try await health.saveWeight(kg: reading.weightKg, date: reading.timestamp)
                 // Only now: a failed save keeps the card so it can be retried.
