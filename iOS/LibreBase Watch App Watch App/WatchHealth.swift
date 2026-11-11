@@ -30,6 +30,7 @@ final class WatchHealth: ObservableObject {
     }
 
     /// Whether the Health app shows weight in metric units, or nil if unknown.
+    /// Stones count as imperial: the watch shows them as lb.
     func bodyMassUnitIsMetric() async -> Bool? {
         let type = HKQuantityType(.bodyMass)
         guard HKHealthStore.isHealthDataAvailable(),

@@ -20,7 +20,7 @@ Unifying the shared bits into a local Swift package is tracked in **#29**.
 
 - `LibreBaseWatchApp.swift` — entry point.
 - `WatchContentView.swift` — gradient card (weight + colored BMI badge + weigh-in
-  date, kg/lb per locale); empty state when there's no reading yet; refreshes on
+  date, kg/lb as set in the Health app, else the region); empty state when there's no reading yet; refreshes on
   appear, on foreground, and pull-to-refresh.
 - `WatchHealth.swift` / `WatchBrand.swift` — self-contained helpers.
 - **HealthKit capability:** `LibreBaseWatch.entitlements`
