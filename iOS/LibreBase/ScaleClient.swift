@@ -87,6 +87,11 @@ final class ScaleClient: NSObject, ObservableObject {
     /// for part of the next one.
     private var consumedCompositionFrames: Set<Data> = []
     private var consumedCompositionAt = Date.distantPast
+    /// Set after a Body Composition frame that awaits a continuation: whether
+    /// that next frame is kept (true) or dropped with its head (false).
+    private var continuationAccepted: Bool?
+    /// The X splits composition over two frames its own way (#59).
+    private var compositionDialect: StandardScaleProfile.Dialect = .standard
     /// One consent attempt per connection, plus at most one re-registration.
     private var consentStarted = false
     private var didReregisterUser = false
@@ -331,8 +336,17 @@ final class ScaleClient: NSObject, ObservableObject {
     }
 
     private func parseBodyComposition(_ data: Data, from p: CBPeripheral) {
-        guard !isForAnotherScaleUser(StandardScaleProfile.bodyCompositionUserIndex(data), on: p),
-              !isRetransmittedComposition(data) else { return }
+        // A flagless continuation (#59) has no user index of its own: it shares
+        // the fate of the frame it continues.
+        if let accepted = continuationAccepted {
+            continuationAccepted = nil
+            guard accepted else { return }
+        } else {
+            let accepted = !isForAnotherScaleUser(StandardScaleProfile.bodyCompositionUserIndex(data), on: p)
+                && !isRetransmittedComposition(data)
+            if StandardScaleProfile.awaitsContinuation(data) { continuationAccepted = accepted }
+            guard accepted else { return }
+        }
         compositionFrames.append((data, Date()))
         if sessionActive, let weightKg = lastReading?.weightKg {
             lastReading?.composition = currentComposition(weightKg: weightKg)
@@ -347,7 +361,8 @@ final class ScaleClient: NSObject, ObservableObject {
         let cutoff = Date().addingTimeInterval(-10)
         compositionFrames.removeAll { $0.receivedAt < cutoff }
         return StandardScaleProfile.parseBodyComposition(frames: compositionFrames.map(\.data), weightKg: weightKg,
-                                                         resolution: compositionResolution ?? .standard)
+                                                         resolution: compositionResolution ?? .standard,
+                                                         dialect: compositionDialect)
     }
 
     /// The Weight Scale Feature read finished (or failed): decode what waited.
@@ -576,6 +591,8 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         didReregisterUser = false
         weightResolution = nil
         compositionResolution = nil
+        continuationAccepted = nil
+        compositionDialect = (p.name ?? "").localizedCaseInsensitiveContains("QardioBase X") ? .qardioX : .standard
         awaitingWeightFeature = false
         didRetryWeightFeature = false
         pendingWeightFrames.removeAll()

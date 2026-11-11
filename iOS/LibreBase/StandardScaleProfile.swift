@@ -87,6 +87,24 @@ enum StandardScaleProfile {
 
     // MARK: - Body Composition Measurement (0x2A9C)
 
+    /// How a scale deviates from the Body Composition spec.
+    enum Dialect: Equatable {
+        case standard
+        /// QardioBase X (#59): a measurement with water and impedance doesn't
+        /// fit one 20-byte indication, so the scale sets the multiple-packet flag
+        /// and sends a second frame **without flags** that carries the remaining
+        /// fields, then vendor bytes. In that continuation, water is a
+        /// percentage (0.1 % units) rather than a mass — three captures put it at
+        /// ~73 % of fat-free mass — and the byte 10 after the remaining fields is
+        /// heart rate (matches the scale's display).
+        case qardioX
+    }
+
+    /// Optional fields in wire order: (flag bit, byte length).
+    private static let optionalFields: [(bit: Int, length: Int)] =
+        [(1, 7), (2, 1), (3, 2), (4, 2), (5, 2), (6, 2), (7, 2), (8, 2), (9, 2), (10, 2), (11, 2)]
+    private static let multiplePacketFlag: UInt16 = 0x1000
+
     /// flags(2) fat%(2) [timestamp(7)] [user(1)] [bmr(2)] [muscle%(2)]
     /// [muscle mass(2)] [fat-free mass(2)] [soft lean mass(2)] [water mass(2)]
     /// [impedance(2)] [weight(2)] [height(2)]. Water arrives as a mass, so it
@@ -94,46 +112,125 @@ enum StandardScaleProfile {
     /// `weightKg` from the Weight Measurement.
     static func parseBodyComposition(_ data: Data, weightKg: Double? = nil,
                                      resolution: MassResolution = .standard) -> BodyComposition? {
-        let b = [UInt8](data)
-        guard b.count >= 4 else { return nil }
-        let flags = u16(b, 0)
-        let imperial = flags & 0x0001 != 0
-        var offset = 4
-        var fields: [Int: UInt16] = [:]
-        // Optional fields in wire order: (flag bit, byte length).
-        for (bit, length) in [(1, 7), (2, 1), (3, 2), (4, 2), (5, 2), (6, 2), (7, 2), (8, 2), (9, 2), (10, 2), (11, 2)]
-        where flags & (1 << UInt16(bit)) != 0 {
-            guard b.count >= offset + length else { return nil }
-            if length == 2 { fields[bit] = u16(b, offset) }
-            offset += length
-        }
+        guard let packet = decodePacket([UInt8](data)), packet.missing.isEmpty else { return nil }
+        return composition(from: packet, weightKg: weightKg, resolution: resolution, dialect: .standard)
+    }
 
-        var composition = BodyComposition()
-        // 0xFFFF = "measurement unsuccessful". Percentages are in 0.1 % units.
-        let fatRaw = u16(b, 2)
-        if fatRaw != 0xFFFF { composition.fatPct = within(Double(fatRaw) * 0.1, 3...60) }
-        if let muscle = fields[4] { composition.musclePct = within(Double(muscle) * 0.1, 10...70) }
-        let weight = fields[10].map { mass(raw: $0, imperial: imperial, resolution: resolution) } ?? weightKg
-        if let water = fields[8], let weight, weight > 0 {
-            let waterKg = mass(raw: water, imperial: imperial, resolution: resolution)
-            composition.waterPct = within(waterKg / weight * 100, 20...80)
-        }
-        return composition.isEmpty ? nil : composition
+    /// True for a frame that sets the multiple-packet flag and is too short for
+    /// the fields it flags: the next frame continues it.
+    static func awaitsContinuation(_ data: Data) -> Bool {
+        guard let packet = decodePacket([UInt8](data)) else { return false }
+        return packet.flags & multiplePacketFlag != 0 && !packet.missing.isEmpty
     }
 
     /// A measurement may be split over several indications (multiple-packet
-    /// flag); later frames fill in what earlier ones lacked.
+    /// flag); later frames fill in what earlier ones lacked. A frame that
+    /// follows one awaiting a continuation is read as that continuation.
     static func parseBodyComposition(frames: [Data], weightKg: Double?,
-                                     resolution: MassResolution = .standard) -> BodyComposition? {
+                                     resolution: MassResolution = .standard,
+                                     dialect: Dialect = .standard) -> BodyComposition? {
         var merged = BodyComposition()
-        for frame in frames {
-            guard let part = parseBodyComposition(frame, weightKg: weightKg, resolution: resolution) else { continue }
+        func merge(_ packet: Packet) {
+            guard let part = composition(from: packet, weightKg: weightKg, resolution: resolution,
+                                         dialect: dialect) else { return }
             merged.fatPct = part.fatPct ?? merged.fatPct
             merged.waterPct = part.waterPct ?? merged.waterPct
             merged.musclePct = part.musclePct ?? merged.musclePct
             merged.bonePct = part.bonePct ?? merged.bonePct
+            merged.heartRateBpm = part.heartRateBpm ?? merged.heartRateBpm
         }
+        // A head awaiting its continuation is merged once the continuation is
+        // in (its impedance may void the whole measurement), or on its own if
+        // none arrives.
+        var pending: Packet?
+        for frame in frames {
+            let bytes = [UInt8](frame)
+            if let head = pending {
+                pending = nil
+                merge(`continue`(head, with: bytes, dialect: dialect))
+                continue
+            }
+            guard let packet = decodePacket(bytes) else { continue }
+            if packet.missing.isEmpty {
+                merge(packet)
+            } else if packet.flags & multiplePacketFlag != 0 {
+                pending = packet
+            }
+            // Truncated without the multiple-packet flag: malformed, skipped.
+        }
+        if let head = pending { merge(head) }
         return merged.isEmpty ? nil : merged
+    }
+
+    private struct Packet {
+        let flags: UInt16
+        let fatRaw: UInt16
+        var fields: [Int: UInt16]
+        /// Flagged fields the frame was too short for, in wire order.
+        var missing: [(bit: Int, length: Int)]
+        var fromContinuation: Set<Int> = []
+        var heartRate: UInt8?
+    }
+
+    private static func decodePacket(_ b: [UInt8]) -> Packet? {
+        guard b.count >= 4 else { return nil }
+        let flags = u16(b, 0)
+        var packet = Packet(flags: flags, fatRaw: u16(b, 2), fields: [:], missing: [])
+        var offset = 4
+        for field in optionalFields where flags & (1 << UInt16(field.bit)) != 0 {
+            guard packet.missing.isEmpty, b.count >= offset + field.length else {
+                packet.missing.append(field)
+                continue
+            }
+            if field.length == 2 { packet.fields[field.bit] = u16(b, offset) }
+            offset += field.length
+        }
+        return packet
+    }
+
+    /// Fills the head frame's missing fields from a flagless continuation.
+    private static func `continue`(_ head: Packet, with b: [UInt8], dialect: Dialect) -> Packet {
+        var packet = head
+        var offset = 0
+        for field in head.missing {
+            guard b.count >= offset + field.length else { break }
+            if field.length == 2 {
+                packet.fields[field.bit] = u16(b, offset)
+                packet.fromContinuation.insert(field.bit)
+            }
+            offset += field.length
+        }
+        packet.missing = []
+        if dialect == .qardioX, b.count > offset + 10 { packet.heartRate = b[offset + 10] }
+        return packet
+    }
+
+    private static func composition(from packet: Packet, weightKg: Double?, resolution: MassResolution,
+                                    dialect: Dialect) -> BodyComposition? {
+        let imperial = packet.flags & 0x0001 != 0
+        let fields = packet.fields
+        var composition = BodyComposition()
+        // Foot-to-foot impedance outside the plausible window means no usable
+        // skin contact: the composition is noise (as for the vendor JSON).
+        if let impedance = fields[9], !QardioResult.plausibleImpedanceOhm.contains(Double(impedance)) {
+            return nil
+        }
+        // 0xFFFF = "measurement unsuccessful". Percentages are in 0.1 % units.
+        if packet.fatRaw != 0xFFFF { composition.fatPct = within(Double(packet.fatRaw) * 0.1, 3...60) }
+        if let muscle = fields[4] { composition.musclePct = within(Double(muscle) * 0.1, 10...70) }
+        if let water = fields[8] {
+            if dialect == .qardioX, packet.fromContinuation.contains(8) {
+                composition.waterPct = within(Double(water) * 0.1, 20...80)
+            } else {
+                let weight = fields[10].map { mass(raw: $0, imperial: imperial, resolution: resolution) } ?? weightKg
+                if let weight, weight > 0 {
+                    let waterKg = mass(raw: water, imperial: imperial, resolution: resolution)
+                    composition.waterPct = within(waterKg / weight * 100, 20...80)
+                }
+            }
+        }
+        if let bpm = packet.heartRate, (30...220).contains(bpm) { composition.heartRateBpm = Double(bpm) }
+        return composition.isEmpty ? nil : composition
     }
 
     /// User Data index a Body Composition frame is attributed to, if it says.
