@@ -38,6 +38,8 @@ struct ScaleReading {
 /// `reconLog` — that first real-device run is the README's Phase-1 recon and
 /// produces the bytes needed to finalize the parser.
 final class ScaleClient: NSObject, ObservableObject {
+    static let shared = ScaleClient()
+
     // MARK: - UI state
     @Published var status = "Searching for scale…"
     @Published var lastReading: ScaleReading?
@@ -106,6 +108,18 @@ final class ScaleClient: NSObject, ObservableObject {
     // Connect timeout
     private var connectTimeoutWorkItem: DispatchWorkItem?
 
+    // Background weigh-ins (#19). With the `bluetooth-central` background mode a
+    // pending connect outlives the app being suspended, and state restoration
+    // lets iOS relaunch the app for it after the system has terminated it.
+    private let restoreIdentifier = "com.michelstorms.LibreBase.scale"
+    private let knownScaleKey = "knownScaleIdentifier"
+    /// True between `willRestoreState` and the first `.poweredOn`: the restored
+    /// peripheral must be picked up as-is, not torn down by `startConnect`.
+    private var restoredFromBackground = false
+    /// Set when a pending connect is asked for while a deliberate teardown is
+    /// still in flight; honoured once that teardown's disconnect arrives.
+    private var rearmAfterTeardown = false
+
     // MARK: - Public API
 
     /// Create the Bluetooth central — which is what raises the system Bluetooth
@@ -115,8 +129,33 @@ final class ScaleClient: NSObject, ObservableObject {
     /// `.poweredOn`, `centralManagerDidUpdateState` kicks off the first connect.
     func start() {
         if central == nil {
-            central = CBCentralManager(delegate: self, queue: .main)
+            central = CBCentralManager(delegate: self, queue: .main,
+                                       options: [CBCentralManagerOptionRestoreIdentifierKey: restoreIdentifier])
         }
+    }
+
+    /// Queue a connection request to the scale we last used. CoreBluetooth keeps
+    /// it pending with no timeout — also while the app is suspended — and
+    /// completes it the moment the scale wakes on a step-on. Scanning can't do
+    /// this in the background: iOS only scans for advertised service UUIDs there,
+    /// and the QardioBase advertises none.
+    func armPendingConnect() {
+        guard let central, central.state == .poweredOn, !isConnected else { return }
+        guard let p = peripheral ?? knownPeripheral(in: central) else { return }
+        peripheral = p
+        p.delegate = self
+        // A connect issued while Retry's cancel is still completing could be
+        // swallowed by it; wait for didDisconnectPeripheral instead.
+        if intentionalDisconnect, p.state == .disconnecting {
+            rearmAfterTeardown = true
+            return
+        }
+        central.connect(p, options: nil)
+    }
+
+    private func knownPeripheral(in central: CBCentralManager) -> CBPeripheral? {
+        guard let id = UserDefaults.standard.string(forKey: knownScaleKey).flatMap(UUID.init) else { return nil }
+        return central.retrievePeripherals(withIdentifiers: [id]).first
     }
 
     /// Populate a believable weigh-in for App Store screenshots (see
@@ -164,6 +203,9 @@ final class ScaleClient: NSObject, ObservableObject {
         // Drop any pending auto-reconnect so we don't end up with two connection
         // attempts to the same peripheral when the user taps Retry. Mark it
         // intentional so didDisconnectPeripheral doesn't immediately re-queue it.
+        let hadPeripheral = peripheral != nil
+        // This attempt owns the connection now; drop any deferred re-arm.
+        rearmAfterTeardown = false
         if let peripheral {
             intentionalDisconnect = true
             central.cancelPeripheralConnection(peripheral)
@@ -176,6 +218,11 @@ final class ScaleClient: NSObject, ObservableObject {
         // UUID, so a service-filtered scan never surfaces it. We match by name
         // hint / advertised standard service in didDiscover instead.
         central.scanForPeripherals(withServices: nil, options: nil)
+        // Fresh launch with a scale we already know: also queue a pending connect,
+        // so a weigh-in is caught even if the app is backgrounded before the scan
+        // finds the scale. (Not after a Retry — that just cancelled this very
+        // request and relies on the scan above.)
+        if !hadPeripheral { armPendingConnect() }
 
         let work = DispatchWorkItem { [weak self] in
             guard let self = self, !self.isConnected else { return }
@@ -346,10 +393,41 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         switch central.state {
         case .poweredOn:
-            startConnect()
+            if restoredFromBackground, let p = peripheral {
+                // Relaunched in the background for the scale: carry on with the
+                // connection iOS handed back instead of resetting it.
+                restoredFromBackground = false
+                if p.state == .connected {
+                    centralManager(central, didConnect: p)
+                } else {
+                    central.connect(p, options: nil)
+                }
+            } else {
+                restoredFromBackground = false
+                startConnect()
+            }
         default:
             status = "Bluetooth not available"
             isConnected = false
+        }
+    }
+
+    func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        guard let p = (dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral])?.first else { return }
+        peripheral = p
+        p.delegate = self
+        restoredFromBackground = true
+        // The scale may already be mid-weigh-in, with its notifications still
+        // subscribed: take the cached characteristics now so a result-ready
+        // notification that beats rediscovery can still read the result.
+        for ch in (p.services ?? []).flatMap({ $0.characteristics ?? [] }) {
+            switch ch.uuid {
+            case weightMeasurement: weightChar = ch
+            case qbMeasure: qardioEngineeringChar = ch
+            case qbResult: qardioMeasurementChar = ch
+            case batteryLevel: batteryChar = ch
+            default: break
+            }
         }
     }
 
@@ -365,6 +443,10 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
             (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID])?.contains(weightScaleService) ?? false
         let advertisesQardioBase =
             (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID])?.contains(qbService) ?? false
+
+        // One scale at a time: a pending connect can complete while a scan is
+        // still running, and a second scale in range must not displace it.
+        guard !isConnected else { return }
 
         // Accept by name hint or by advertised standard service.
         guard advName.localizedCaseInsensitiveContains(nameHint) || advertisesWeightScale || advertisesQardioBase else {
@@ -384,8 +466,11 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManager(_ central: CBCentralManager, didConnect p: CBPeripheral) {
         isConnected = true
         connectTimeoutWorkItem?.cancel()
+        central.stopScan()
+        UserDefaults.standard.set(p.identifier.uuidString, forKey: knownScaleKey)
         // Fresh connection → clean session state so the next step-on records.
         intentionalDisconnect = false
+        rearmAfterTeardown = false
         sessionActive = false
         didFinalizeSession = false
         qardioMeasurementActive = false
@@ -417,6 +502,10 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         // by re-queuing a connect to the peripheral we just dropped.
         if intentionalDisconnect {
             intentionalDisconnect = false
+            if rearmAfterTeardown {
+                rearmAfterTeardown = false
+                central.connect(p, options: nil)
+            }
             return
         }
 
