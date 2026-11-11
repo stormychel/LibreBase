@@ -145,8 +145,11 @@ enum StandardScaleProfile {
         // is in (its impedance may void the whole measurement), or on its own if
         // none arrives. Spec scales send each packet with its own flags.
         var pending: (packet: Packet, bytes: [UInt8])?
+        var seenHeads: Set<[UInt8]> = []
         for frame in frames {
             let bytes = [UInt8](frame)
+            // A head already handled (merged or voided) is a retransmission.
+            if dialect == .qardioX, pending?.bytes != bytes, seenHeads.contains(bytes) { continue }
             if let head = pending {
                 if bytes == head.bytes { continue }  // retransmitted head
                 if !awaitsContinuation(frame, dialect: dialect) {
@@ -162,7 +165,12 @@ enum StandardScaleProfile {
             if packet.missing.isEmpty {
                 merge(packet)
             } else if packet.flags & multiplePacketFlag != 0 {
-                if dialect == .qardioX { pending = (packet, bytes) } else { merge(packet) }
+                if dialect == .qardioX {
+                    pending = (packet, bytes)
+                    seenHeads.insert(bytes)
+                } else {
+                    merge(packet)
+                }
             }
             // Truncated without the multiple-packet flag: malformed, skipped.
         }

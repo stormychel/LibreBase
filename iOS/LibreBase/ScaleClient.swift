@@ -349,6 +349,12 @@ final class ScaleClient: NSObject, ObservableObject {
             continuationAccepted = nil
             guard accepted else { return }
         } else {
+            // A truncated multiple-packet head is malformed for a spec scale: it
+            // is the X's split, whatever the scale is called.
+            if compositionDialect == .standard, StandardScaleProfile.awaitsContinuation(data, dialect: .qardioX) {
+                log("body composition: X-style split frame — using the QardioBase X layout")
+                compositionDialect = .qardioX
+            }
             let accepted = !isForAnotherScaleUser(StandardScaleProfile.bodyCompositionUserIndex(data), on: p)
                 && !isRetransmittedComposition(data)
             if StandardScaleProfile.awaitsContinuation(data, dialect: compositionDialect) {

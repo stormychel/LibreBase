@@ -218,10 +218,13 @@ struct LibreBaseTests {
         let standard = Profile.parseBodyComposition(frames: [hexData(cases[0].head), hexData(cases[0].tail)],
                                                     weightKg: 84.95, resolution: x)
         #expect(standard?.heartRateBpm == nil)
-        // Implausible impedance in the continuation discards the whole measurement.
+        // Implausible impedance in the continuation discards the whole measurement,
+        // and a later retransmission of that head doesn't bring its fat back.
         let head = hexData(cases[0].head)
         let noContact = hexData("d8 01 d0 07 10 02 38 00 0c 34 01 95 00 24 6b 77 02 06 25")
         #expect(Profile.parseBodyComposition(frames: [head, noContact], weightKg: 84.95,
+                                             resolution: x, dialect: .qardioX) == nil)
+        #expect(Profile.parseBodyComposition(frames: [head, noContact, head], weightKg: 84.95,
                                              resolution: x, dialect: .qardioX) == nil)
     }
 }
