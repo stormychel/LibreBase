@@ -68,6 +68,7 @@ struct ContentView: View {
         guard let c = scale.lastReading?.composition else { return nil }
         let parts = [("Fat", c.fatPct), ("Water", c.waterPct), ("Muscle", c.musclePct), ("Bone", c.bonePct)]
             .compactMap { label, value in value.map { "\(label) \(Int($0.rounded()))%" } }
+            + [c.heartRateBpm.map { "Pulse \(Int($0.rounded())) bpm" }].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
