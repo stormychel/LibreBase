@@ -42,7 +42,7 @@ final class WeighInRecorder: ObservableObject {
         // Same key and default as the "Auto-save to Apple Health" toggle.
         guard UserDefaults.standard.object(forKey: "autoSaveToHealth") as? Bool ?? true else {
             unsavedReading = reading
-            scale.status = "Weigh-in complete — not saved to Health"
+            scale.status = String(localized: "Weigh-in complete — not saved to Health")
             return
         }
         save(reading)
@@ -56,10 +56,10 @@ final class WeighInRecorder: ObservableObject {
                     await health.saveComposition(composition, weightKg: reading.weightKg,
                                                  date: reading.timestamp)
                 }
-                scale.status = "Saved to Apple Health"
+                scale.status = String(localized: "Saved to Apple Health")
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
             } catch {
-                scale.status = "Couldn't save to Health — check Settings ▸ Privacy ▸ Health"
+                scale.status = String(localized: "Couldn't save to Health — check Settings ▸ Privacy ▸ Health")
                 // Keep it saveable by hand unless a newer weigh-in took its place.
                 if scale.lastReading?.timestamp == reading.timestamp { unsavedReading = reading }
             }
