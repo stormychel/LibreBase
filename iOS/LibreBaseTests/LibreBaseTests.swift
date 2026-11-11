@@ -31,5 +31,7 @@ struct LibreBaseTests {
                                         "<- Model Number String: 42 31 30 30",
                                         "qardio measurement JSON decoded: 97.6 kg"])
         #expect(b100.description == "model B100, measurement received")
+        #expect(CaptureSummary(log: ["<- Model Number String: "]).modelNumber == nil)
+        #expect(CaptureSummary(log: ["<- Model Number String: 42 32 30 30 00"]).modelNumber == "B200")
     }
 }

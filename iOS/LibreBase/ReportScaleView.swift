@@ -22,6 +22,8 @@ struct ReportScaleView: View {
     @State private var model: ScaleModelAnswer?
     @State private var connected: YesNo?
     @State private var showedWeight: YesNo?
+    /// The scale gets a few seconds to wake before "not found" is shown.
+    @State private var scanGracePassed = false
 
     private var summary: CaptureSummary { CaptureSummary(log: scale.reconLog) }
     /// The form must be complete: blank answers made reports unusable (#56, #62).
@@ -96,6 +98,10 @@ struct ReportScaleView: View {
                 scale.reconMode = true
                 scale.startConnect()
                 withAnimation { started = true }
+                Task {
+                    try? await Task.sleep(for: .seconds(10))
+                    withAnimation { scanGracePassed = true }
+                }
             } label: {
                 Label("Start diagnostic capture", systemImage: "record.circle")
                     .font(.headline)
@@ -115,7 +121,7 @@ struct ReportScaleView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if !scale.reconLog.isEmpty, !summary.qardioFound {
+            if scanGracePassed, !summary.qardioFound {
                 // Two blank reports had nothing but a scan list (#62).
                 Label("No Qardio scale found yet. Step on the scale to wake it, and close the Qardio app on every phone — the scale talks to one app at a time.",
                       systemImage: "exclamationmark.triangle.fill")
@@ -181,8 +187,9 @@ struct ReportScaleView: View {
                     )
             }
             .disabled(!canSend)
-            if !scale.reconLog.isEmpty, !canSend {
-                Text("Answer the questions above to send.")
+            if !canSend {
+                Text(scale.reconLog.isEmpty ? "Step on the scale first, then answer the questions above."
+                                            : "Answer the questions above to send.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -271,7 +278,9 @@ struct CaptureSummary: Equatable {
             if line.hasPrefix("found peripheral:"), line.localizedCaseInsensitiveContains("qardio") { qardioFound = true }
             if line.hasPrefix("<- Model Number String: ") {
                 let bytes = line.dropFirst("<- Model Number String: ".count).split(separator: " ").compactMap { UInt8($0, radix: 16) }
-                modelNumber = String(bytes: bytes, encoding: .utf8)
+                let decoded = String(bytes: bytes.filter { $0 != 0 }, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespaces)
+                modelNumber = decoded?.isEmpty == false ? decoded : nil
                 qardioFound = true
             }
             if line.hasPrefix("<- 2A9D:") || line.hasPrefix("qardio measurement JSON decoded") { gotMeasurement = true }
