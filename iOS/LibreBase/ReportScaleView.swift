@@ -33,6 +33,11 @@ struct ReportScaleView: View {
 
     private var capturedLines: Int { scale.reconLog.count }
 
+    /// The status strings are localized, so compare against the localized text.
+    private var bluetoothDown: Bool {
+        [String(localized: "Bluetooth unavailable"), String(localized: "Bluetooth not available")].contains(scale.status)
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -117,15 +122,23 @@ struct ReportScaleView: View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Step on your scale now", systemImage: "figure.stand")
                 .font(.headline)
-            Text("Stand still until your weight settles, then step off. LibreBase is recording how your scale communicates — \(capturedLines) line\(capturedLines == 1 ? "" : "s") captured so far.")
+            Text("Stand still until your weight settles, then step off. LibreBase is recording how your scale communicates — lines captured so far: \(capturedLines).")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if scanGracePassed, !summary.qardioFound, scale.status != "Bluetooth unavailable" {
+            if scanGracePassed, !summary.qardioFound, !bluetoothDown {
                 // Two blank reports had nothing but a scan list (#62).
                 Label("No Qardio scale found yet. Step on the scale to wake it, and close the Qardio app on every phone — the scale talks to one app at a time.",
                       systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            // Rule out the cheapest cause of a silent scale before a report is sent.
+            if let pct = scale.batteryLevelPct, pct <= 20 {
+                Label("Scale battery is low (\(pct)%). A weak battery can stop the scale sending a weight — charge or replace it first if you can.",
+                      systemImage: "battery.25percent")
+                    .font(.subheadline)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }

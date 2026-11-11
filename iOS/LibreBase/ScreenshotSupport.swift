@@ -16,6 +16,7 @@ enum ScreenshotScene: String {
     case privacy
     case reading
     case readingImperial = "reading_imperial"
+    case history
 }
 
 /// Deterministic state injection for App Store screenshots. The app is launched
@@ -45,7 +46,21 @@ enum ScreenshotMode {
     }
 
     /// True when the scene should show the completed app with a demo weigh-in.
-    static var showsReading: Bool { scene == .reading || scene == .readingImperial }
+    static var showsReading: Bool { scene == .reading || scene == .readingImperial || scene == .history }
+
+    /// True when the scene opens the weigh-in history sheet over the reading.
+    static var showsHistory: Bool { scene == .history }
+
+    /// Twelve weeks of believable weigh-ins for the history scene, newest first,
+    /// ending on the demo reading's 72.6 kg. Fixed so captures are reproducible.
+    static func demoWeighIns(now: Date = Date()) -> [WeighIn] {
+        let offsets = [0.0, 0.3, 0.1, 0.6, 0.8, 0.7, 1.1, 1.4, 1.2, 1.7, 1.9, 2.3]
+        return offsets.enumerated().map { week, offset in
+            WeighIn(id: UUID(),
+                    date: Calendar.current.date(byAdding: .day, value: -7 * week, to: now) ?? now,
+                    weightKg: 72.6 + offset)
+        }
+    }
 
     /// Forces the unit system for unit-aware scenes so kg/lb is deterministic
     /// regardless of the simulator's region (launch-arg locale doesn't reliably
@@ -68,7 +83,7 @@ enum ScreenshotMode {
         case .welcome, .howItWorks, .privacy:
             // Onboarding scenes — start fresh.
             d.set(false, forKey: "hasCompletedOnboarding")
-        case .reading, .readingImperial:
+        case .reading, .readingImperial, .history:
             // Completed app with a saved height so BMI shows.
             d.set(true, forKey: "hasCompletedOnboarding")
             d.set(true, forKey: "autoSaveToHealth")
