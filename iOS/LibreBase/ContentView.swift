@@ -22,6 +22,7 @@ struct ContentView: View {
     @State private var claiming: Set<String> = []
     @State private var showSettings = false
     @State private var showReportScale = false
+    @State private var showHistory = false
     @State private var showHealthDeniedAlert = false
     @State private var pickerCmValue = 170   // wheel selection, metric (cm)
     @State private var pickerFeet = 5         // wheel selection, imperial
@@ -172,6 +173,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showHeightSheet) { heightPicker }
         .sheet(isPresented: $showSettings) { settingsSheet }
+        .sheet(isPresented: $showHistory) {
+            HistoryView(useMetric: useMetric).environmentObject(health)
+        }
         .onChange(of: scenePhase) { _, phase in
             // iOS suspends BLE scans in the background; re-arm one on return so the
             // scale reconnects on its own without the user tapping Reconnect.
@@ -216,6 +220,7 @@ struct ContentView: View {
             // Health machinery (no prompts, no scanning) so captures are clean.
             if ScreenshotMode.isActive {
                 if ScreenshotMode.showsReading { scale.loadDemoReading() }
+                if ScreenshotMode.showsHistory { showHistory = true }
                 return
             }
 
@@ -517,6 +522,26 @@ struct ContentView: View {
                     Spacer()
                     Text(heightLabel)
                         .foregroundStyle(heightCm > 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(Brand.teal))
+                    Image(systemName: "chevron.right")
+                        .font(.caption.bold())
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.vertical, 14)
+                .padding(.horizontal, 16)
+            }
+
+            Divider().padding(.leading, 16)
+
+            // Weigh-in history and trend, read back from Apple Health (#16).
+            Button {
+                showHistory = true
+            } label: {
+                HStack {
+                    Text("History")
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Image(systemName: "chart.xyaxis.line")
+                        .foregroundStyle(Brand.teal)
                     Image(systemName: "chevron.right")
                         .font(.caption.bold())
                         .foregroundStyle(.tertiary)

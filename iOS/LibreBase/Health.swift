@@ -15,7 +15,8 @@ final class Health: ObservableObject {
     let store = HKHealthStore()
 
     /// Request permission to write body mass, body composition and height, and
-    /// read height (for BMI).
+    /// read height (for BMI), body mass (for the weigh-in history) and date of
+    /// birth and sex (for a User Data scale).
     func requestAuth() async throws {
         guard HKHealthStore.isHealthDataAvailable() else { return }
         let mass = HKQuantityType(.bodyMass)
@@ -26,7 +27,7 @@ final class Health: ObservableObject {
         // Date of birth and sex set up a User Data scale's body composition (#60).
         let birth = HKCharacteristicType(.dateOfBirth)
         let sex = HKCharacteristicType(.biologicalSex)
-        try await store.requestAuthorization(toShare: [mass, height, fat, lean, heartRate], read: [height, birth, sex])
+        try await store.requestAuthorization(toShare: [mass, height, fat, lean, heartRate], read: [height, mass, birth, sex])
     }
 
     /// Share (write) authorization for body mass. HealthKit never reveals *read*
@@ -60,6 +61,27 @@ final class Health: ObservableObject {
                     return
                 }
                 cont.resume(returning: sample.quantity.doubleValue(for: .meterUnit(with: .centi)))
+            }
+            self.store.execute(query)
+        }
+    }
+
+    /// Weigh-ins since `start`, newest first, from every source in Apple Health —
+    /// Health stays the source of truth. Empty if there are none or read access
+    /// wasn't granted (HealthKit doesn't say which).
+    func weighIns(since start: Date) async -> [WeighIn] {
+        guard HKHealthStore.isHealthDataAvailable() else { return [] }
+        let type = HKQuantityType(.bodyMass)
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: nil)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+        return await withCheckedContinuation { cont in
+            let query = HKSampleQuery(sampleType: type, predicate: predicate,
+                                      limit: HKObjectQueryNoLimit, sortDescriptors: [sort]) { _, samples, _ in
+                let weighIns = (samples as? [HKQuantitySample] ?? []).map {
+                    WeighIn(id: $0.uuid, date: $0.endDate,
+                            weightKg: $0.quantity.doubleValue(for: .gramUnit(with: .kilo)))
+                }
+                cont.resume(returning: weighIns)
             }
             self.store.execute(query)
         }
@@ -106,4 +128,11 @@ final class Health: ObservableObject {
             try? await store.save(HKQuantitySample(type: type, quantity: quantity, start: date, end: date))
         }
     }
+}
+
+/// One body-mass sample read back from Apple Health.
+struct WeighIn: Identifiable, Equatable {
+    let id: UUID
+    let date: Date
+    let weightKg: Double
 }
