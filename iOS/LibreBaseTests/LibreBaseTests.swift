@@ -173,6 +173,93 @@ struct LibreBaseTests {
                 == BodyComposition(waterPct: 50))
     }
 
+    // MARK: - Two-frame body composition (QardioBase X, issue #59)
+
+    private func hexData(_ s: String) -> Data { Data(s.split(separator: " ").map { UInt8($0, radix: 16)! }) }
+
+    @Test func mergesQardioXContinuationFrame() throws {
+        typealias Profile = StandardScaleProfile
+        let x = Profile.MassResolution(kgPerUnit: 0.05, lbPerUnit: 0.1)
+        // Real pairs from three X captures (#59): head with the multiple-packet
+        // flag, truncated before water and impedance, then a flagless continuation.
+        let cases: [(head: String, tail: String, weight: Double, fat: Double, water: Double, pulse: Double)] = [
+            ("7e 53 5b 01 ea 07 0b 07 0a 0b 16 03 20 06 a6 01 1e 04 56 04",
+             "d8 01 3c 02 10 02 38 00 0c 34 01 95 00 24 6b 77 02 06 25", 84.95, 34.7, 47.2, 107),
+            ("7e 53 75 00 ea 07 0b 03 0f 0f 05 02 ec 05 3a 02 f0 03 26 04",
+             "7d 02 bc 01 95 01 36 00 04 68 00 c9 00 1c 43 7f 03 04 1c", 60.15, 11.7, 63.7, 67),
+            ("7e 53 6a 01 ea 07 0b 07 07 31 2d 03 63 06 9c 01 5a 04 94 04",
+             "cd 01 fe 01 c3 01 3a 00 0e 3e 01 91 00 25 52 50 02 06 1b", 91.85, 36.2, 46.1, 82),
+        ]
+        for c in cases {
+            let head = hexData(c.head), tail = hexData(c.tail)
+            #expect(Profile.awaitsContinuation(head, dialect: .qardioX))
+            #expect(!Profile.awaitsContinuation(tail, dialect: .qardioX))
+            #expect(!Profile.awaitsContinuation(head, dialect: .standard))
+            // A retransmitted head between head and continuation changes nothing.
+            #expect(Profile.parseBodyComposition(frames: [head, head, tail], weightKg: c.weight, resolution: x,
+                                                 dialect: .qardioX)?.heartRateBpm == c.pulse)
+            // The head alone still yields what fits: fat and muscle.
+            #expect(Profile.parseBodyComposition(head) == nil)
+            let partial = try #require(Profile.parseBodyComposition(frames: [head], weightKg: c.weight,
+                                                                      resolution: x, dialect: .qardioX))
+            #expect(abs(try #require(partial.fatPct) - c.fat) < 0.001)
+            #expect(partial.waterPct == nil)
+
+            let merged = try #require(Profile.parseBodyComposition(frames: [head, tail], weightKg: c.weight,
+                                                                     resolution: x, dialect: .qardioX))
+            #expect(abs(try #require(merged.fatPct) - c.fat) < 0.001)
+            #expect(abs(try #require(merged.waterPct) - c.water) < 0.001)
+            #expect(merged.heartRateBpm == c.pulse)
+            // Water ≈ 73 % of fat-free mass, which is what makes it a percentage.
+            #expect(abs(c.water - 0.73 * (100 - c.fat)) < 2)
+        }
+
+        // Spec scales: the next frame is its own packet, never a flagless tail.
+        let standard = Profile.parseBodyComposition(frames: [hexData(cases[0].head), hexData(cases[0].tail)],
+                                                    weightKg: 84.95, resolution: x)
+        #expect(standard?.heartRateBpm == nil)
+        // Implausible impedance in the continuation discards the whole measurement,
+        // and a later retransmission of that head doesn't bring its fat back.
+        let head = hexData(cases[0].head)
+        let noContact = hexData("d8 01 d0 07 10 02 38 00 0c 34 01 95 00 24 6b 77 02 06 25")
+        #expect(Profile.parseBodyComposition(frames: [head, noContact], weightKg: 84.95,
+                                             resolution: x, dialect: .qardioX) == nil)
+        #expect(Profile.parseBodyComposition(frames: [head, noContact, head], weightKg: 84.95,
+                                             resolution: x, dialect: .qardioX) == nil)
+        #expect(Profile.parseBodyComposition(frames: [head, noContact, head, noContact], weightKg: 84.95,
+                                             resolution: x, dialect: .qardioX) == nil)
+        // A retransmitted good pair still gives the one measurement.
+        let tail = hexData(cases[0].tail)
+        #expect(Profile.parseBodyComposition(frames: [head, tail, head, tail], weightKg: 84.95,
+                                             resolution: x, dialect: .qardioX)?.heartRateBpm == 107)
+    }
+
+    // MARK: - User Data writes (QardioBase X, issue #60)
+
+    @Test func encodesUserDataWrites() {
+        typealias UserData = StandardScaleProfile.UserData
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        let now = utc.date(from: DateComponents(year: 2026, month: 11, day: 8))!
+        let birth = DateComponents(year: 1985, month: 6, day: 15)
+
+        #expect(UserData.height(cm: 187) == Data([0xBB, 0x00]))
+        #expect(UserData.height(cm: 186.6) == Data([0xBB, 0x00]))
+        #expect(UserData.height(cm: 0) == nil)
+        #expect(UserData.dateOfBirth(birth) == Data([0xC1, 0x07, 6, 15]))
+        #expect(UserData.dateOfBirth(DateComponents(year: 1985)) == nil)
+        #expect(UserData.age(dateOfBirth: birth, now: now, calendar: utc) == Data([41]))
+        #expect(UserData.gender(.female) == Data([1]))
+
+        let profile = StandardScaleProfile.UserProfile(heightCm: 187, dateOfBirth: birth, sex: .male)
+        let writes = UserData.writes(for: profile, now: now)
+        #expect(writes.map(\.uuid) == ["2A8E", "2A85", "2A80", "2A8C"])
+        #expect(writes.last?.value == Data([0]))
+        // Only what's known is written.
+        #expect(UserData.writes(for: .init(heightCm: nil, dateOfBirth: nil, sex: nil)).isEmpty)
+        #expect(UserData.writes(for: .init(heightCm: 170, dateOfBirth: nil, sex: nil)).map(\.uuid) == ["2A8E"])
+    }
+
     // MARK: - Unattributed weigh-ins (QardioBase X, issue #61)
 
     @Test func replayedUnattributedWeighInsShareOneKey() throws {
