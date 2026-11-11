@@ -121,7 +121,7 @@ struct ReportScaleView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if scanGracePassed, !summary.qardioFound {
+            if scanGracePassed, !summary.qardioFound, scale.status != "Bluetooth unavailable" {
                 // Two blank reports had nothing but a scan list (#62).
                 Label("No Qardio scale found yet. Step on the scale to wake it, and close the Qardio app on every phone — the scale talks to one app at a time.",
                       systemImage: "exclamationmark.triangle.fill")
@@ -188,7 +188,7 @@ struct ReportScaleView: View {
             }
             .disabled(!canSend)
             if !canSend {
-                Text(scale.reconLog.isEmpty ? "Step on the scale first, then answer the questions above."
+                Text(scale.reconLog.isEmpty ? "Step on the scale first."
                                             : "Answer the questions above to send.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -279,8 +279,8 @@ struct CaptureSummary: Equatable {
             if line.hasPrefix("<- Model Number String: ") {
                 let bytes = line.dropFirst("<- Model Number String: ".count).split(separator: " ").compactMap { UInt8($0, radix: 16) }
                 let decoded = String(bytes: bytes.filter { $0 != 0 }, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespaces)
-                modelNumber = decoded?.isEmpty == false ? decoded : nil
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if let decoded, !decoded.isEmpty { modelNumber = decoded }
                 qardioFound = true
             }
             if line.hasPrefix("<- 2A9D:") || line.hasPrefix("qardio measurement JSON decoded") { gotMeasurement = true }
