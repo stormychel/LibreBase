@@ -45,6 +45,10 @@ struct ContentView: View {
 
     private var weightUnit: String { useMetric ? "kg" : "lb" }
 
+    private func formatted(kg: Double) -> String {
+        String(format: "%.1f", useMetric ? kg : kg / 0.45359237)
+    }
+
     // BMI is computed in-app from a locally stored height. We deliberately ignore
     // the scale's own BMI: it depends on a height set via the (discontinued)
     // Qardio app and is often stale, for another user, or absent entirely.
@@ -111,6 +115,10 @@ struct ContentView: View {
                     header
                     statusPills
                     heroCard
+
+                    ForEach(scale.unclaimedReadings, id: \.timestamp) { reading in
+                        unclaimedCard(reading)
+                    }
 
                     // When a previous reading is on screen but the scale has since
                     // dropped (it powers down after each weigh-in), offer a manual
@@ -275,6 +283,45 @@ struct ContentView: View {
         .font(.subheadline)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(scale.batteryLevelPct.map { "Battery \($0) percent" } ?? "Battery level unknown")
+    }
+
+    // MARK: - Unattributed weigh-ins (#61)
+
+    /// A weigh-in the scale replayed without a user: offer it to this phone's
+    /// owner instead of dropping it.
+    private func unclaimedCard(_ reading: ScaleReading) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Unassigned weigh-in", systemImage: "questionmark.circle")
+                .font(.subheadline.weight(.semibold))
+            Text("The scale recorded \(formatted(kg: reading.weightKg)) \(weightUnit) on \(reading.timestamp.formatted(date: .abbreviated, time: .shortened)) without knowing who stood on it. Was it you?")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Save to Health") { claim(reading) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Brand.teal)
+                Button("Not me") { scale.resolveUnclaimed(reading) }
+                    .buttonStyle(.bordered)
+            }
+            .font(.subheadline)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func claim(_ reading: ScaleReading) {
+        scale.resolveUnclaimed(reading)
+        Task { @MainActor in
+            do {
+                try await health.saveWeight(kg: reading.weightKg, date: reading.timestamp)
+                scale.status = "Saved to Apple Health"
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } catch {
+                scale.status = "Couldn't save to Health — check Settings ▸ Privacy ▸ Health"
+            }
+        }
     }
 
     // MARK: - Status pills
