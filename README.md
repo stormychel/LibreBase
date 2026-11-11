@@ -33,7 +33,7 @@ Important note: this app will always remain free and an Android version may be c
 - **Automatic weigh-in.** Step on the scale; the reading appears and is saved to Apple Health.
 - **Apple Health integration.** Weight is written to HealthKit's Body Mass.
 - **In-app BMI** computed from your height (read from and synced back to Apple Health), with a unit-aware picker. The scale's own BMI is deliberately *not* used — see [BMI & units](#bmi--units).
-- **Locale-aware units.** Weight shows kg or lb, height shows cm or ft/in, based on your region. Canonical metric values are always what's stored in Health.
+- **Units.** Weight shows kg or lb: Automatic (your region) or a fixed choice in the app; the watch follows the unit set in the Health app. Height shows cm or ft/in based on your region. Canonical metric values are always what's stored in Health.
 - **Battery and connection status** at a glance, with a one-tap reconnect.
 - **Recon mode** — an optional BLE capture log for inspecting the scale's GATT services and payloads, useful for supporting new hardware.
 

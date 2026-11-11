@@ -19,7 +19,10 @@ struct WatchContentView: View {
     @State private var heightCm: Double?
     @State private var loaded = false
 
-    private var useMetric: Bool { Locale.current.measurementSystem == .metric }
+    /// The unit chosen in the Health app (Health ▸ Weight ▸ Unit), which also
+    /// covers pounds on a metric region (#57); the region until it's known.
+    @State private var healthUsesKg: Bool?
+    private var useMetric: Bool { healthUsesKg ?? (Locale.current.measurementSystem == .metric) }
 
     private var weightValue: String? {
         guard let kg = weightKg else { return nil }
@@ -118,6 +121,7 @@ struct WatchContentView: View {
         try? await health.requestReadAuth()
         // Assign unconditionally so a deleted sample / revoked access clears the
         // card instead of leaving a stale reading on screen.
+        healthUsesKg = await health.bodyMassUnitIsMetric() ?? healthUsesKg
         let latest = await health.latestWeight()
         weightKg = latest?.kg
         weighedAt = latest?.date

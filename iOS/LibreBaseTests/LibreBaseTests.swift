@@ -24,6 +24,17 @@ struct LibreBaseTests {
         return defaults
     }
 
+
+    // MARK: - Weight unit setting (#57)
+
+    @Test func weightUnitSettingOverridesRegion() {
+        #expect(WeightUnitSetting.automatic.showsKilograms(regionIsMetric: true))
+        #expect(!WeightUnitSetting.automatic.showsKilograms(regionIsMetric: false))
+        #expect(!WeightUnitSetting.pounds.showsKilograms(regionIsMetric: true))
+        #expect(WeightUnitSetting.kilograms.showsKilograms(regionIsMetric: false))
+        #expect(WeightUnitSetting(rawValue: "pounds") == .pounds)
+    }
+
     @Test func parsesB200Result() throws {
         let reading = try #require(QardioResult.parse(b200))
         #expect(reading.weightKg == 71.4)
