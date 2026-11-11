@@ -20,7 +20,10 @@ final class Health: ObservableObject {
         let height = HKQuantityType(.height)
         let fat = HKQuantityType(.bodyFatPercentage)
         let lean = HKQuantityType(.leanBodyMass)
-        try await store.requestAuthorization(toShare: [mass, height, fat, lean], read: [height])
+        // Date of birth and sex set up a User Data scale's body composition (#60).
+        let birth = HKCharacteristicType(.dateOfBirth)
+        let sex = HKCharacteristicType(.biologicalSex)
+        try await store.requestAuthorization(toShare: [mass, height, fat, lean], read: [height, birth, sex])
     }
 
     /// Share (write) authorization for body mass. HealthKit never reveals *read*
@@ -57,6 +60,19 @@ final class Health: ObservableObject {
             }
             self.store.execute(query)
         }
+    }
+
+    /// Date of birth and sex from Apple Health, each nil when unset or not
+    /// allowed (HealthKit throws for a denied characteristic).
+    func characteristics() -> (dateOfBirth: DateComponents?, sex: StandardScaleProfile.UserProfile.Sex?) {
+        let birth = try? store.dateOfBirthComponents()
+        let sex: StandardScaleProfile.UserProfile.Sex? = switch (try? store.biologicalSex())?.biologicalSex {
+        case .female: .female
+        case .male: .male
+        case .other: .unspecified
+        default: nil
+        }
+        return (birth, sex)
     }
 
     /// Save a weight sample (kilograms) to Apple Health.

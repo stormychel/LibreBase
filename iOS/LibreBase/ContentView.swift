@@ -72,6 +72,14 @@ struct ContentView: View {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
+    /// What a User Data scale (QardioBase X) is told about its user after
+    /// consent (#60). Takes effect at the next connection.
+    private func updateScaleUserProfile() {
+        let (birth, sex) = health.characteristics()
+        scale.userProfile = StandardScaleProfile.UserProfile(heightCm: heightCm > 0 ? heightCm : nil,
+                                                             dateOfBirth: birth, sex: sex)
+    }
+
     private var scaleUserLabel: String {
         if saveAnyScaleUser { return "Everyone" }
         return knownScaleUsers[scaleUserID] ?? "Not set"
@@ -143,6 +151,7 @@ struct ContentView: View {
             // scale reconnects on its own without the user tapping Reconnect.
             if phase == .active { scale.resumeScanning() }
         }
+        .onChange(of: heightCm) { _, _ in updateScaleUserProfile() }
         .onChange(of: autoSaveToHealth) { _, isOn in
             // Flipping the in-app toggle on does nothing unless iOS will accept the
             // writes. HealthKit's permission sheet appears only once, ever, so if it
@@ -223,6 +232,7 @@ struct ContentView: View {
             if heightCm == 0, let h = await health.latestHeightCm() {
                 heightCm = h
             }
+            updateScaleUserProfile()
         }
     }
 

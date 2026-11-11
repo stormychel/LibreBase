@@ -57,6 +57,9 @@ final class ScaleClient: NSObject, ObservableObject {
 
     /// Fires once per weigh-in when the scale stops sending updates.
     var onFinalReading: ((ScaleReading) -> Void)?
+    /// Written to a User Data scale (QardioBase X) after each consent, so its
+    /// body composition uses the real height, age and sex (#60).
+    var userProfile: StandardScaleProfile.UserProfile?
 
     // MARK: - BLE
     /// Created on demand by `start()` rather than in `init`: building the central
@@ -70,6 +73,8 @@ final class ScaleClient: NSObject, ObservableObject {
     private var qardioMeasurementChar: CBCharacteristic?
     private var bodyCompChar: CBCharacteristic?
     private var userControlPointChar: CBCharacteristic?
+    /// Writable User Data characteristics (height, date of birth, age, gender).
+    private var userDataChars: [CBUUID: CBCharacteristic] = [:]
     /// Mass per raw unit from the Weight Scale / Body Composition Feature reads.
     /// While the weight one is outstanding, weight frames wait in
     /// `pendingWeightFrames`: decoded at the spec default, the X's would read
@@ -413,6 +418,7 @@ final class ScaleClient: NSObject, ObservableObject {
             beginUserConsent(on: p)
         case (ControlPoint.consent, true):
             consentTimeoutWorkItem?.cancel()
+            writeUserProfile(to: p)
             status = "Connected — step on the scale"
         case (ControlPoint.consent, false) where !didReregisterUser && storedScaleUser(for: p) != nil:
             // The scale no longer knows our user (reset, or deleted on the
@@ -427,6 +433,19 @@ final class ScaleClient: NSObject, ObservableObject {
             consentFailed(reason: "Scale refused a new user (user slots full?)")
         default:
             consentFailed()
+        }
+    }
+
+    /// User Data writes need consent first; the scale keeps them per user.
+    private func writeUserProfile(to p: CBPeripheral) {
+        guard let userProfile else {
+            log("user data: no profile to write")
+            return
+        }
+        for (uuid, value) in StandardScaleProfile.UserData.writes(for: userProfile) {
+            guard let ch = userDataChars[CBUUID(string: uuid)] else { continue }
+            log("-> \(uuid): \(hex(value))")
+            p.writeValue(value, for: ch, type: .withResponse)
         }
     }
 
@@ -574,6 +593,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         finalizedWeightTimestamp = nil
         consentStarted = false
         didReregisterUser = false
+        userDataChars.removeAll()
         weightResolution = nil
         compositionResolution = nil
         awaitingWeightFeature = false
@@ -603,6 +623,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         qardioMeasurementActive = false
         bodyCompChar = nil
         userControlPointChar = nil
+        userDataChars.removeAll()
         weightResolution = nil
         compositionResolution = nil
         awaitingWeightFeature = false
@@ -657,6 +678,10 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
                 // didUpdateNotificationStateFor.
                 userControlPointChar = ch
                 p.setNotifyValue(true, for: ch)
+            case _ where s.uuid == userDataService && ch.properties.contains(.write)
+                && StandardScaleProfile.UserData.writableUUIDs.contains(ch.uuid.uuidString):
+                userDataChars[ch.uuid] = ch
+                if reconMode, ch.properties.contains(.read) { p.readValue(for: ch) }
             case currentTime:
                 // A scale whose clock was never set (the Qardio app used to do
                 // it) reads 1970; some refuse to measure until it is written.
