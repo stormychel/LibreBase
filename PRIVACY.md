@@ -10,8 +10,9 @@ accounts, no servers, no analytics, and no tracking of any kind.
 - **Bluetooth** is used solely to find your QardioBase scale and read each
   weigh-in. LibreBase does not connect to any other device and sends nothing
   over the network.
-- **Apple Health** — with your permission, LibreBase writes your weight (and the
-  height you enter) to Apple Health, and reads your height to calculate BMI in
+- **Apple Health** — with your permission, LibreBase writes your weight, the body
+  composition and heart rate your scale measures (and the height you enter) to
+  Apple Health, and reads your height to calculate BMI in
   the app. This data is stored by Apple Health on your device, under your
   control. You can revoke access at any time in Settings ▸ Privacy & Security ▸
   Health.
