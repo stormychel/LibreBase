@@ -13,6 +13,8 @@ When Qardio Inc. shut down in 2025 — app delisted, servers dark — the scales
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![tested](https://img.shields.io/badge/tested-QardioBase%201%20only-orange)
 
+<a href="https://buymeacoffee.com/stormychel"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-support-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy me a coffee" /></a>
+
 </div>
 
 > **Compatibility:** works with the **original QardioBase (1st generation, model B100)** and the **QardioBase 2 (B200)**. **QardioBase X** support is experimental and unconfirmed. **Have another Qardio Base?** Please try LibreBase and tell us how it went — email **librebaseapp@michelstorms.dev** or send a capture log (see [Contributing](#contributing)). Your reports help us support more scales.
