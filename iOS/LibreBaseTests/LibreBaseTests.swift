@@ -218,6 +218,11 @@ struct LibreBaseTests {
              "7d 02 bc 01 95 01 36 00 04 68 00 c9 00 1c 43 7f 03 04 1c", 60.15, 11.7, 63.7, 67),
             ("7e 53 6a 01 ea 07 0b 07 07 31 2d 03 63 06 9c 01 5a 04 94 04",
              "cd 01 fe 01 c3 01 3a 00 0e 3e 01 91 00 25 52 50 02 06 1b", 91.85, 36.2, 46.1, 82),
+            // #75: the tester whose Health showed "~50" against the scale's ~20 %
+            // body fat. The frames say 21.1 %; ~50 is likely the derived lean body
+            // mass (63.0 kg from her 2A9D × 0.789 ≈ 49.7 kg) or the 51.0 % muscle.
+            ("7e 53 d3 00 ea 07 0b 13 09 37 02 02 a4 05 fe 01 b0 03 e2 03",
+             "3a 02 51 02 17 02 32 00 05 c0 00 b4 00 18 36 c8 03 01 16", 63.0, 21.1, 57.0, 54),
         ]
         for c in cases {
             let head = hexData(c.head), tail = hexData(c.tail)
