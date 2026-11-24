@@ -753,8 +753,6 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         // Only log named peripherals — unnamed ones are environment noise.
         if !advName.isEmpty { log("found peripheral: \"\(advName)\" rssi:\(RSSI)") }
 
-        let advertisesWeightScale =
-            (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID])?.contains(weightScaleService) ?? false
         let advertisesQardioBase =
             (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID])?.contains(qbService) ?? false
 
@@ -762,8 +760,10 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         // still running, and a second scale in range must not displace it.
         guard !isConnected else { return }
 
-        // Accept by name hint or by advertised standard service.
-        guard advName.localizedCaseInsensitiveContains(nameHint) || advertisesWeightScale || advertisesQardioBase else {
+        // Accept a QardioBase by name or by its vendor service. Not by the standard
+        // Weight Scale service alone: other brands' scales advertise it too, and a
+        // Sanitas SBF73 was connected and asked for a pairing code (#79).
+        guard advName.localizedCaseInsensitiveContains(nameHint) || advertisesQardioBase else {
             return
         }
 
@@ -872,8 +872,14 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
         // A device without a scale service (a QardioARM saved as the scale by an
         // earlier build, #77) is dropped and forgotten, and the scan resumes.
+        // The same goes for another brand's scale saved by an earlier build (#79):
+        // it has a Weight Scale service but a non-Qardio name. A nameless device
+        // (possible on a pending reconnect) is given the benefit of the doubt.
         let uuids = Set((p.services ?? []).map(\.uuid))
-        if error == nil, !uuids.isEmpty, !uuids.contains(weightScaleService), !uuids.contains(qbService) {
+        let name = p.name ?? discoveredName ?? ""
+        let otherBrand = !name.isEmpty && !name.localizedCaseInsensitiveContains(nameHint)
+        if error == nil, !uuids.isEmpty, !uuids.contains(qbService),
+           !uuids.contains(weightScaleService) || otherBrand {
             rejectNonScale(p)
             return
         }
