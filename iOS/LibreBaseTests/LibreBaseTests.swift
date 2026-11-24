@@ -41,6 +41,15 @@ struct LibreBaseTests {
         #expect(b100.description == "model B100, measurement received")
         #expect(CaptureSummary(log: ["<- Model Number String: "]).modelNumber == nil)
         #expect(CaptureSummary(log: ["<- Model Number String: 42 32 30 30 00"]).modelNumber == "B200")
+        // A QardioARM (blood pressure monitor) is not a scale (#77).
+        let arm = CaptureSummary(log: ["found peripheral: \"QardioARM\" rssi:-83",
+                                       "service: Blood Pressure",
+                                       "<- Model Number String: 41 31 30 30"])
+        #expect(!arm.qardioFound && arm.description == "no Qardio scale found")
+        // Reconnected by a pending connect, so no scan line: the service counts.
+        let b200 = CaptureSummary(log: ["service: C8219E89-93E0-4169-A3DC-EA7959E866AF",
+                                        "<- Model Number String: 42 32 30 30"])
+        #expect(b200.description == "model B200, no measurement")
     }
 
     // MARK: - Weight unit setting (#57)
