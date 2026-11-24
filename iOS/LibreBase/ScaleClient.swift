@@ -149,8 +149,9 @@ final class ScaleClient: NSObject, ObservableObject {
     private let qbResult = CBUUID(string: "B24F98BE-9CD4-4F82-B935-01F18F104EDE") // read: final measurement JSON
     private let qbControl = CBUUID(string: "A78AF805-8F3F-4E8F-A964-318B768BC38C") // notify: state (00 idle, 03 measuring, 06 done)
 
-    /// Advertised-name hint used to recognize the scale during the scan.
-    private let nameHint = "qardio"
+    /// Advertised-name hint used to recognize the scale during the scan. Not just
+    /// "qardio": that also matched the QardioARM blood pressure monitor (#77).
+    private let nameHint = "qardiobase"
 
     // Debounce: a weigh-in may stream several frames before stabilizing.
     private var completionWorkItem: DispatchWorkItem?
@@ -188,6 +189,8 @@ final class ScaleClient: NSObject, ObservableObject {
     /// Set when a pending connect is asked for while a deliberate teardown is
     /// still in flight; honoured once that teardown's disconnect arrives.
     private var rearmAfterTeardown = false
+    /// A device dropped for not being a scale (#77), until its disconnect arrives.
+    private var rejectedPeripheralID: UUID?
 
     // MARK: - Public API
 
@@ -220,6 +223,23 @@ final class ScaleClient: NSObject, ObservableObject {
             return
         }
         central.connect(p, options: nil)
+    }
+
+    /// Disconnect from a peripheral that turned out not to be a scale, forget it
+    /// if it was remembered as the scale, and keep scanning for the real one.
+    private func rejectNonScale(_ p: CBPeripheral) {
+        let services = (p.services ?? []).map { "\($0.uuid)" }.joined(separator: ", ")
+        log("not a scale: \"\(p.name ?? discoveredName ?? "?")\" (services: \(services)), disconnecting")
+        if UserDefaults.standard.string(forKey: knownScaleKey) == p.identifier.uuidString {
+            UserDefaults.standard.removeObject(forKey: knownScaleKey)
+        }
+        if peripheral == p { peripheral = nil }
+        discoveredName = nil
+        status = String(localized: "Searching for scale…")
+        // The scan resumes in didDisconnectPeripheral, once this link is down, so
+        // its late disconnect can't tear down a scale connected in the meantime.
+        rejectedPeripheralID = p.identifier
+        central?.cancelPeripheralConnection(p)
     }
 
     private func knownPeripheral(in central: CBCentralManager) -> CBPeripheral? {
@@ -804,6 +824,12 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
+        if p.identifier == rejectedPeripheralID {
+            rejectedPeripheralID = nil
+            isConnected = false
+            central.scanForPeripherals(withServices: nil, options: nil)
+            return
+        }
         isConnected = false
         weightChar = nil
         batteryChar = nil
@@ -844,6 +870,13 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
+        // A device without a scale service (a QardioARM saved as the scale by an
+        // earlier build, #77) is dropped and forgotten, and the scan resumes.
+        let uuids = Set((p.services ?? []).map(\.uuid))
+        if error == nil, !uuids.isEmpty, !uuids.contains(weightScaleService), !uuids.contains(qbService) {
+            rejectNonScale(p)
+            return
+        }
         servicesAwaitingCharacteristics = p.services?.count ?? 0
         for s in p.services ?? [] {
             log("service: \(s.uuid)")

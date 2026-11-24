@@ -19,6 +19,7 @@ struct ReportScaleView: View {
     @State private var started = false
     @State private var showMail = false
     @State private var mailUnavailable = false
+    @State private var confirmNoWeighIn = false
     @State private var model: ScaleModelAnswer?
     @State private var connected: YesNo?
     @State private var showedWeight: YesNo?
@@ -71,6 +72,12 @@ struct ReportScaleView: View {
                     body: reportBody,
                     attachment: reportAttachment
                 ) { _ in showMail = false }
+            }
+            .alert("No weigh-in captured yet", isPresented: $confirmNoWeighIn) {
+                Button("Send anyway") { sendReport() }
+                Button("Keep capturing", role: .cancel) {}
+            } message: {
+                Text("Step on the scale and wait for your weight before sending, so the report includes a measurement. If your scale never shows a weight in LibreBase, send it anyway.")
             }
             .alert("Mail isn't set up", isPresented: $mailUnavailable) {
                 Button("OK", role: .cancel) {}
@@ -187,7 +194,8 @@ struct ReportScaleView: View {
             Text("Then send it over")
                 .font(.headline)
             Button {
-                sendReport()
+                // A report sent before the weigh-in has no measurement (#77).
+                if summary.gotMeasurement { sendReport() } else { confirmNoWeighIn = true }
             } label: {
                 Label("Send report", systemImage: "paperplane.fill")
                     .font(.headline)
@@ -288,13 +296,15 @@ struct CaptureSummary: Equatable {
 
     init(log: [String]) {
         for line in log {
-            if line.hasPrefix("found peripheral:"), line.localizedCaseInsensitiveContains("qardio") { qardioFound = true }
+            // A QardioBase by name or by scale service; not any Qardio device,
+            // since the QardioARM is a blood pressure monitor (#77).
+            if line.hasPrefix("found peripheral:"), line.localizedCaseInsensitiveContains("qardiobase") { qardioFound = true }
+            if line == "service: Weight Scale" || line == "service: C8219E89-93E0-4169-A3DC-EA7959E866AF" { qardioFound = true }
             if line.hasPrefix("<- Model Number String: ") {
                 let bytes = line.dropFirst("<- Model Number String: ".count).split(separator: " ").compactMap { UInt8($0, radix: 16) }
                 let decoded = String(bytes: bytes.filter { $0 != 0 }, encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if let decoded, !decoded.isEmpty { modelNumber = decoded }
-                qardioFound = true
             }
             if line.hasPrefix("<- 2A9D:") || line.hasPrefix("qardio measurement JSON decoded") { gotMeasurement = true }
         }
