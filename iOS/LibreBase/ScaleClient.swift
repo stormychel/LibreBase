@@ -189,6 +189,8 @@ final class ScaleClient: NSObject, ObservableObject {
     /// Set when a pending connect is asked for while a deliberate teardown is
     /// still in flight; honoured once that teardown's disconnect arrives.
     private var rearmAfterTeardown = false
+    /// A device dropped for not being a scale (#77), until its disconnect arrives.
+    private var rejectedPeripheralID: UUID?
 
     // MARK: - Public API
 
@@ -226,18 +228,18 @@ final class ScaleClient: NSObject, ObservableObject {
     /// Disconnect from a peripheral that turned out not to be a scale, forget it
     /// if it was remembered as the scale, and keep scanning for the real one.
     private func rejectNonScale(_ p: CBPeripheral) {
-        log("not a scale: \"\(p.name ?? discoveredName ?? "?")\", disconnecting")
+        let services = (p.services ?? []).map { "\($0.uuid)" }.joined(separator: ", ")
+        log("not a scale: \"\(p.name ?? discoveredName ?? "?")\" (services: \(services)), disconnecting")
         if UserDefaults.standard.string(forKey: knownScaleKey) == p.identifier.uuidString {
             UserDefaults.standard.removeObject(forKey: knownScaleKey)
         }
-        isConnected = false
-        rearmAfterTeardown = false
-        intentionalDisconnect = true
         if peripheral == p { peripheral = nil }
         discoveredName = nil
-        central?.cancelPeripheralConnection(p)
         status = String(localized: "Searching for scale…")
-        central?.scanForPeripherals(withServices: nil, options: nil)
+        // The scan resumes in didDisconnectPeripheral, once this link is down, so
+        // its late disconnect can't tear down a scale connected in the meantime.
+        rejectedPeripheralID = p.identifier
+        central?.cancelPeripheralConnection(p)
     }
 
     private func knownPeripheral(in central: CBCentralManager) -> CBPeripheral? {
@@ -822,6 +824,12 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
+        if p.identifier == rejectedPeripheralID {
+            rejectedPeripheralID = nil
+            isConnected = false
+            central.scanForPeripherals(withServices: nil, options: nil)
+            return
+        }
         isConnected = false
         weightChar = nil
         batteryChar = nil
@@ -865,7 +873,7 @@ extension ScaleClient: CBCentralManagerDelegate, CBPeripheralDelegate {
         // A device without a scale service (a QardioARM saved as the scale by an
         // earlier build, #77) is dropped and forgotten, and the scan resumes.
         let uuids = Set((p.services ?? []).map(\.uuid))
-        if error == nil, !uuids.contains(weightScaleService), !uuids.contains(qbService) {
+        if error == nil, !uuids.isEmpty, !uuids.contains(weightScaleService), !uuids.contains(qbService) {
             rejectNonScale(p)
             return
         }
